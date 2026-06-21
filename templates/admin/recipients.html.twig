@@ -1,0 +1,65 @@
+{% extends base_template %}
+
+{% block title %}{{ type.label }} - Recipients{% endblock %}
+
+{% block body %}
+    <p><a class="se-back" href="{{ path('system_email_admin_index') }}">&larr; All types</a></p>
+    <header class="se-head">
+        <div>
+            <h1>{{ type.label }}</h1>
+            <div class="se-sub"><code class="se-key">{{ type.key }}</code>
+                {% if type.enabled %}
+                    <span class="se-pill se-pill--on">Enabled</span>
+                {% else %}
+                    <span class="se-pill se-pill--off">Disabled</span>
+                {% endif %}
+            </div>
+        </div>
+        <a class="se-btn se-btn--primary" href="{{ path('system_email_admin_recipient_new', { key: type.key }) }}">Add recipient</a>
+    </header>
+
+    <div class="se-card">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Type</th>
+                    <th>Active</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for recipient in recipients %}
+                <tr>
+                    <td>{{ recipient.name }}</td>
+                    <td>{{ recipient.email }}</td>
+                    <td><span class="se-tag">{{ recipient.recipientTypeEnum.label }}</span></td>
+                    <td>
+                        {% if recipient.active %}
+                            <span class="se-pill se-pill--on">Active</span>
+                        {% else %}
+                            <span class="se-pill se-pill--off">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="se-actions">
+                            <a class="se-btn" href="{{ path('system_email_admin_recipient_edit', { id: recipient.id }) }}">Edit</a>
+                            <form class="se-inline" method="post" action="{{ path('system_email_admin_recipient_toggle', { id: recipient.id }) }}">
+                                <input type="hidden" name="_token" value="{{ csrf_token('toggle-recipient-' ~ recipient.id) }}">
+                                <button type="submit" class="se-btn">{{ recipient.active ? 'Deactivate' : 'Activate' }}</button>
+                            </form>
+                            <form class="se-inline" method="post" action="{{ path('system_email_admin_recipient_delete', { id: recipient.id }) }}" onsubmit="return confirm('Delete this recipient?');">
+                                <input type="hidden" name="_token" value="{{ csrf_token('delete-recipient-' ~ recipient.id) }}">
+                                <button type="submit" class="se-btn se-btn--danger">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="5" class="se-empty">No recipients yet. Add one to start sending this email.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+{% endblock %}

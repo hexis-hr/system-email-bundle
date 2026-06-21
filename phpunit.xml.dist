@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    failOnRisky is off: booting a full Symfony kernel registers an exception
+    handler that is only restored on kernel shutdown (tearDown), which PHPUnit 11
+    checks for one step too early and reports as a risky "did not remove its own
+    exception handlers". It is a framework/runner interaction, not a defect.
+-->
+<phpunit
+    bootstrap="vendor/autoload.php"
+    colors="true"
+    failOnRisky="false"
+    failOnWarning="true"
+>
+    <testsuites>
+        <testsuite name="unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="integration">
+            <directory>tests/Integration</directory>
+        </testsuite>
+    </testsuites>
+
+    <php>
+        <ini name="error_reporting" value="-1"/>
+        <ini name="memory_limit" value="-1"/>
+        <server name="APP_ENV" value="test" force="true"/>
+        <server name="SHELL_VERBOSITY" value="-1"/>
+        <env name="SYMFONY_DEPRECATIONS_HELPER" value="disabled"/>
+        <server name="KERNEL_CLASS" value="Hexis\SystemEmailBundle\Tests\Integration\TestKernel"/>
+    </php>
+</phpunit>

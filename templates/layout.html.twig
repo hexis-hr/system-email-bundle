@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}System Emails{% endblock %}</title>
+    {% block stylesheets %}
+    <style>
+        :root {
+            --se-surface: #f6f7f9;
+            --se-card: #ffffff;
+            --se-ink: #1b1f24;
+            --se-muted: #6b7480;
+            --se-line: #e4e7eb;
+            --se-accent: #4338ca;
+            --se-accent-ink: #ffffff;
+            --se-ok: #0f7b4a;
+            --se-ok-bg: #e6f4ec;
+            --se-off: #9aa1ab;
+            --se-off-bg: #eef0f2;
+            --se-danger: #b42318;
+            --se-radius: 10px;
+            --se-space: clamp(1.25rem, 1rem + 1.5vw, 2.5rem);
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: var(--se-ink);
+            background: var(--se-surface);
+            line-height: 1.5;
+        }
+        .se-wrap { max-width: 960px; margin: 0 auto; padding: var(--se-space); }
+        .se-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
+        .se-head h1 { font-size: clamp(1.5rem, 1.2rem + 1vw, 2rem); letter-spacing: -0.02em; margin: 0; }
+        .se-head .se-sub { color: var(--se-muted); font-size: 0.95rem; }
+        .se-card { background: var(--se-card); border: 1px solid var(--se-line); border-radius: var(--se-radius); box-shadow: 0 1px 2px rgba(16,24,40,0.04); overflow: hidden; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 0.85rem 1.1rem; border-bottom: 1px solid var(--se-line); vertical-align: middle; }
+        th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--se-muted); font-weight: 600; background: #fbfbfc; }
+        tr:last-child td { border-bottom: 0; }
+        td.se-num { color: var(--se-muted); font-variant-numeric: tabular-nums; }
+        code.se-key { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 0.82rem; background: #f1f2f4; padding: 0.1rem 0.4rem; border-radius: 5px; color: #3a4250; }
+        .se-pill { display: inline-block; font-size: 0.74rem; font-weight: 600; padding: 0.18rem 0.6rem; border-radius: 999px; }
+        .se-pill--on { color: var(--se-ok); background: var(--se-ok-bg); }
+        .se-pill--off { color: var(--se-off); background: var(--se-off-bg); }
+        .se-tag { display: inline-block; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.12rem 0.5rem; border-radius: 5px; background: #eef1fb; color: var(--se-accent); }
+        .se-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+        .se-btn { display: inline-flex; align-items: center; gap: 0.35rem; font: inherit; font-size: 0.85rem; font-weight: 500; padding: 0.4rem 0.8rem; border-radius: 7px; border: 1px solid var(--se-line); background: #fff; color: var(--se-ink); cursor: pointer; text-decoration: none; transition: background 150ms ease, border-color 150ms ease; }
+        .se-btn:hover { background: #f3f4f6; }
+        .se-btn--primary { background: var(--se-accent); color: var(--se-accent-ink); border-color: var(--se-accent); }
+        .se-btn--primary:hover { background: #372ba5; }
+        .se-btn--danger { color: var(--se-danger); border-color: #f3d3cf; }
+        .se-btn--danger:hover { background: #fdf0ef; }
+        .se-btn--ghost { border-color: transparent; color: var(--se-accent); padding-inline: 0.35rem; }
+        form.se-inline { display: inline; margin: 0; }
+        .se-back { color: var(--se-muted); text-decoration: none; font-size: 0.9rem; }
+        .se-back:hover { color: var(--se-ink); }
+        .se-empty { padding: 2.5rem 1.1rem; text-align: center; color: var(--se-muted); }
+        .se-form { padding: 1.5rem; max-width: 30rem; }
+        .se-form label { display: block; font-weight: 600; font-size: 0.85rem; margin-bottom: 0.3rem; }
+        .se-form input[type=text], .se-form input[type=email], .se-form select { width: 100%; padding: 0.5rem 0.65rem; border: 1px solid var(--se-line); border-radius: 7px; font: inherit; margin-bottom: 1rem; }
+        .se-form .checkbox label { display: inline; }
+        .se-form-actions { margin-top: 0.5rem; display: flex; gap: 0.6rem; align-items: center; }
+    </style>
+    {% endblock %}
+</head>
+<body>
+    <main class="se-wrap">
+        {% block body %}{% endblock %}
+    </main>
+</body>
+</html>

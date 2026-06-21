@@ -1,0 +1,28 @@
+{% extends base_template %}
+
+{% block title %}Add recipient - {{ type.label }}{% endblock %}
+
+{% block body %}
+    <p><a class="se-back" href="{{ path('system_email_admin_recipients', { key: type.key }) }}">&larr; {{ type.label }}</a></p>
+    <header class="se-head">
+        <div>
+            <h1>Add recipient</h1>
+            <div class="se-sub"><code class="se-key">{{ type.key }}</code></div>
+        </div>
+    </header>
+
+    <div class="se-card">
+        <div class="se-form">
+            {{ form_start(form) }}
+            {{ form_row(form.name) }}
+            {{ form_row(form.email) }}
+            {{ form_row(form.recipientType) }}
+            <div class="checkbox">{{ form_row(form.active) }}</div>
+            <div class="se-form-actions">
+                <button type="submit" class="se-btn se-btn--primary">Save</button>
+                <a class="se-btn" href="{{ path('system_email_admin_recipients', { key: type.key }) }}">Cancel</a>
+            </div>
+            {{ form_end(form) }}
+        </div>
+    </div>
+{% endblock %}

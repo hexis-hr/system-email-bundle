@@ -1,0 +1,53 @@
+{% extends base_template %}
+
+{% block title %}System Emails{% endblock %}
+
+{% block body %}
+    <header class="se-head">
+        <div>
+            <h1>System Emails</h1>
+            <div class="se-sub">Configure recipients and toggle sending per email type.</div>
+        </div>
+    </header>
+
+    <div class="se-card">
+        <table>
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Key</th>
+                    <th>Recipients</th>
+                    <th>Sending</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for type in types %}
+                <tr>
+                    <td>{{ type.label }}</td>
+                    <td><code class="se-key">{{ type.key }}</code></td>
+                    <td class="se-num">{{ type.recipients|length }}</td>
+                    <td>
+                        {% if type.enabled %}
+                            <span class="se-pill se-pill--on">Enabled</span>
+                        {% else %}
+                            <span class="se-pill se-pill--off">Disabled</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="se-actions">
+                            <a class="se-btn" href="{{ path('system_email_admin_recipients', { key: type.key }) }}">Manage recipients</a>
+                            <form class="se-inline" method="post" action="{{ path('system_email_admin_type_toggle', { key: type.key }) }}">
+                                <input type="hidden" name="_token" value="{{ csrf_token('toggle-type-' ~ type.id) }}">
+                                <button type="submit" class="se-btn">{{ type.enabled ? 'Disable' : 'Enable' }}</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="5" class="se-empty">No email types yet. Declare them under <code class="se-key">system_email.types</code> and run <code class="se-key">system-email:sync</code>.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+{% endblock %}
