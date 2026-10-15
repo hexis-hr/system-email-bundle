@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hexis\SystemEmailBundle\Service;
 
+use Hexis\SystemEmailBundle\Entity\SystemEmailLog;
 use Hexis\SystemEmailBundle\Model\Attachment;
 use Hexis\SystemEmailBundle\Model\Recipient;
 use Symfony\Component\Mailer\MailerInterface;
@@ -39,6 +40,7 @@ final class SystemEmailMailer
      * @param array{address?: string|null, name?: string|null}  $fromOverride
      * @param Recipient[]                                        $extraRecipients additional ad-hoc recipients (e.g. the acting user)
      * @param object[]                                           $stamps          Messenger stamps used on the async path
+     * @param string|null                                        $reference       record the e-mail is about, shown in the e-mail log (e.g. "invoice:42")
      *
      * @return bool true when sent/queued; false when skipped (type disabled or no recipients)
      */
@@ -50,6 +52,7 @@ final class SystemEmailMailer
         array $fromOverride = [],
         array $extraRecipients = [],
         array $stamps = [],
+        ?string $reference = null,
     ): bool {
         if (!$this->manager->isEnabled($key)) {
             return false;
@@ -67,6 +70,12 @@ final class SystemEmailMailer
         $this->applyFrom($email, $fromOverride);
         $this->applyRecipients($email, $recipients);
         $this->applyAttachments($email, $attachments);
+
+        // Read by the e-mail log and removed before delivery.
+        $email->getHeaders()->addTextHeader(SystemEmailLog::HEADER_TYPE, $key);
+        if ($reference !== null && $reference !== '') {
+            $email->getHeaders()->addTextHeader(SystemEmailLog::HEADER_REFERENCE, $reference);
+        }
 
         if ($this->async && $this->bus !== null) {
             $this->bus->dispatch(new SendEmailMessage($email), $stamps);

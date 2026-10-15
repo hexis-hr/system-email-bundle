@@ -7,18 +7,24 @@ namespace Hexis\SystemEmailBundle\Tests\Integration;
 use Composer\InstalledVersions;
 use Doctrine\Bundle\DoctrineBundle\DoctrineBundle;
 use Hexis\SystemEmailBundle\SystemEmailBundle;
+use Psr\Log\NullLogger;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
 use Symfony\Bundle\TwigBundle\TwigBundle;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\HttpKernel\Kernel;
+use Symfony\Component\Mailer\Messenger\SendEmailMessage;
 use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 
 /**
  * Minimal kernel for integration testing the bundle.
  *
  * Framework config is version-guarded so it boots on Symfony 5.4 -> 8. Doctrine
- * runs against an in-memory SQLite database; the mailer uses the null transport.
+ * runs against an in-memory SQLite database; the mailer uses {@see TestTransport}.
+ * In the "async" environment e-mail is queued on an in-memory Messenger transport
+ * (one retry) and handled inside the doctrine_transaction middleware, which rolls
+ * back what the handler wrote when it fails; otherwise it is handled synchronously.
  */
 final class TestKernel extends Kernel
 {
@@ -40,7 +46,7 @@ final class TestKernel extends Kernel
             'secret' => 'test',
             'test' => true,
             'http_method_override' => false,
-            'mailer' => ['dsn' => 'null://null'],
+            'mailer' => ['dsn' => 'test://default'],
             'csrf_protection' => true,
             'session' => ['storage_factory_id' => 'session.storage.factory.mock_file'],
         ];
@@ -49,7 +55,29 @@ final class TestKernel extends Kernel
             $framework['handle_all_throwables'] = true;
         }
 
+        if ($this->environment === 'async') {
+            $framework['messenger'] = [
+                'buses' => [
+                    'messenger.bus.default' => ['middleware' => ['doctrine_transaction']],
+                ],
+                'transports' => [
+                    'async' => [
+                        'dsn' => 'in-memory://?serialize=true',
+                        'retry_strategy' => ['max_retries' => 1, 'delay' => 0],
+                    ],
+                ],
+                'routing' => [SendEmailMessage::class => 'async'],
+            ];
+        }
+
         $container->loadFromExtension('framework', $framework);
+
+        // Keeps the expected Messenger failure logs of the retry tests out of the test output.
+        $container->register('logger', NullLogger::class);
+
+        $container->register(TestTransportFactory::class)
+            ->setArguments([new Reference('event_dispatcher')])
+            ->addTag('mailer.transport_factory');
 
         // DoctrineBundle 3 removed the proxy option (native lazy objects are always on).
         $orm = version_compare((string) InstalledVersions::getVersion('doctrine/doctrine-bundle'), '3.0', '<')
@@ -69,6 +97,10 @@ final class TestKernel extends Kernel
         ]);
 
         $container->loadFromExtension('system_email', [
+            'mail_log' => [
+                'enabled' => true,
+                'table_name' => 'test_email_log',
+            ],
             'types' => [
                 'welcome' => ['label' => 'Welcome email'],
                 'alert' => ['label' => 'System alert'],

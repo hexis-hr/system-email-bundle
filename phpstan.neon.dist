@@ -3,3 +3,8 @@ parameters:
     paths:
         - src
     treatPhpDocTypesAsCertain: false
+    ignoreErrors:
+        # Doctrine hydrates the read-only log entity; its rows are written through DBAL.
+        -
+            identifier: property.onlyRead
+            path: src/Entity/SystemEmailLog.php
