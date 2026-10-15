@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hexis\SystemEmailBundle\Tests\Integration;
 
+use Composer\InstalledVersions;
 use Doctrine\Bundle\DoctrineBundle\DoctrineBundle;
 use Hexis\SystemEmailBundle\SystemEmailBundle;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
@@ -50,14 +51,17 @@ final class TestKernel extends Kernel
 
         $container->loadFromExtension('framework', $framework);
 
+        // DoctrineBundle 3 removed the proxy option (native lazy objects are always on).
+        $orm = version_compare((string) InstalledVersions::getVersion('doctrine/doctrine-bundle'), '3.0', '<')
+            ? ['auto_generate_proxy_classes' => true]
+            : [];
+
         $container->loadFromExtension('doctrine', [
             'dbal' => [
                 'driver' => 'pdo_sqlite',
                 'url' => 'sqlite:///:memory:',
             ],
-            'orm' => [
-                'auto_generate_proxy_classes' => true,
-            ],
+            'orm' => $orm,
         ]);
 
         $container->loadFromExtension('twig', [
