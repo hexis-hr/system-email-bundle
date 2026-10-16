@@ -22,6 +22,9 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 )]
 final class PurgeEmailLogCommand extends Command
 {
+    /** 100 years. */
+    private const MAX_DAYS = 36500;
+
     public function __construct(private EmailLogWriter $writer)
     {
         parent::__construct();
@@ -33,7 +36,7 @@ final class PurgeEmailLogCommand extends Command
             'older-than',
             null,
             InputOption::VALUE_REQUIRED,
-            'Retention in days: entries created more than this many days ago are deleted.',
+            'Retention in days (1 to 36500): entries created more than this many days ago are deleted.',
         );
     }
 
@@ -41,9 +44,10 @@ final class PurgeEmailLogCommand extends Command
     {
         $io = new SymfonyStyle($input, $output);
 
-        $days = (string) $input->getOption('older-than');
-        if (!ctype_digit($days) || (int) $days < 1) {
-            $io->error('Give the retention as --older-than=<days>, a whole number of at least 1.');
+        $days = ltrim((string) $input->getOption('older-than'), '0');
+        // The length is checked before the cast: a longer number saturates and gives a cutoff in the future.
+        if (!ctype_digit($days) || \strlen($days) > 5 || (int) $days > self::MAX_DAYS) {
+            $io->error(sprintf('Give the retention as --older-than=<days>, a whole number from 1 to %d.', self::MAX_DAYS));
 
             return Command::INVALID;
         }

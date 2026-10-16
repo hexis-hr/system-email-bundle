@@ -589,10 +589,24 @@ final class EmailLogTest extends KernelTestCase
         foreach (['0', 'abc', '-5', '1.5'] as $days) {
             $tester = $this->command('system-email:log:purge');
             self::assertSame(Command::INVALID, $tester->execute(['--older-than' => $days]), $days);
-            self::assertStringContainsString('--older-than=<days>, a whole number of at least 1', $this->display($tester));
+            self::assertStringContainsString('--older-than=<days>, a whole number from 1 to 36500', $this->display($tester));
         }
 
         self::assertCount(1, $this->entries());
+    }
+
+    public function testPurgeRejectsARetentionOfMoreThanOneHundredYears(): void
+    {
+        $this->boot();
+        $this->mailer()->send($this->email());
+
+        // The two long ones cast to PHP_INT_MAX days, which DateTime turns into a cutoff in the year 2343668.
+        foreach (['9223372036854775807', '99999999999999999999', '36501'] as $days) {
+            $tester = $this->command('system-email:log:purge');
+            self::assertSame(Command::INVALID, $tester->execute(['--older-than' => $days]), $days);
+        }
+
+        self::assertCount(1, $this->entries(), 'A current entry is kept.');
     }
 
     public function testPurgeKeepsTheResendOfAPurgedEntry(): void

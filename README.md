@@ -286,7 +286,7 @@ Nothing is deleted unless you purge, so retention is indefinite by default.
 Schedule the purge to apply a retention period:
 
 ```bash
-bin/console system-email:log:purge --older-than=365   # days
+bin/console system-email:log:purge --older-than=365   # days, 1 to 36500
 ```
 
 ## Configuration reference
