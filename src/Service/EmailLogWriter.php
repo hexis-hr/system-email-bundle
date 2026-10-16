@@ -70,20 +70,16 @@ final class EmailLogWriter
 
     /**
      * Called right before a transport attempt. Creates the entry of a message sent
-     * without a queue; before the first attempt of a queued message, replaces the
-     * sender, recipients, subject and stored message with the final (rendered) ones.
+     * without a queue; before every attempt of a queued message, replaces the
+     * sender, recipients, subject and stored message with the final (rendered) ones
+     * (a worker transaction that failed rolled back the earlier replacement).
      */
     public function startAttempt(string $correlationId, Message $message, ?string $type, ?string $reference): void
     {
         $this->atomically(function () use ($correlationId, $message, $type, $reference): void {
-            $row = $this->find($correlationId);
-            if ($row === null) {
+            if ($this->find($correlationId) === null) {
                 $this->insert($correlationId, $message, $type, $reference, null);
 
-                return;
-            }
-
-            if ((int) $row['attempt_count'] > 0) {
                 return;
             }
 
@@ -188,7 +184,7 @@ final class EmailLogWriter
     private function find(string $correlationId): ?array
     {
         $row = $this->connection()->fetchAssociative(
-            sprintf('SELECT attempt_count, attempts FROM %s WHERE correlation_id = ?', $this->tableName),
+            sprintf('SELECT attempts FROM %s WHERE correlation_id = ?', $this->tableName),
             [$correlationId],
         );
 

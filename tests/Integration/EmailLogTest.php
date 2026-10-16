@@ -377,6 +377,26 @@ final class EmailLogTest extends KernelTestCase
         self::assertSame($entries[0]->getCorrelationId(), $this->deliveredHeader(0, SystemEmailLog::HEADER_ID));
     }
 
+    public function testRetryThatSucceedsStoresTheDeliveredMessage(): void
+    {
+        $this->boot('async');
+        $this->createWelcomeType();
+        TestTransport::$fail = true;
+        $this->sendWelcome();
+        // The worker's transaction is rolled back, with the snapshot it took before this attempt.
+        $this->consume();
+        TestTransport::$fail = false;
+
+        $this->consume();
+
+        $entry = $this->entries()[0];
+        self::assertSame(EmailLogStatus::SENT, $entry->getStatus());
+        $stored = $entry->getStoredMessage();
+        self::assertInstanceOf(Message::class, $stored);
+        self::assertFalse($stored->getHeaders()->has(SystemEmailLog::HEADER_TYPE), 'The stored message is the delivered one, not the queued one.');
+        self::assertSame('welcome', $entry->getType());
+    }
+
     public function testDisabledLogWritesNothingAndStillStripsTheLogHeaders(): void
     {
         $this->boot('nolog');

@@ -181,7 +181,7 @@ How it is fed, from Mailer and Messenger events:
   created as `queued`; the queued copy gets the correlation header (the caller's
   message object is not modified).
 - `MessageEvent` (not queued): an attempt starts. A message sent without a queue
-  gets its entry here; before the first attempt of a queued one, sender,
+  gets its entry here; before every attempt of a queued one, sender,
   recipients, subject and stored message are refreshed from the rendered message.
 - `SentMessageEvent` / `FailedMessageEvent`: the attempt is recorded.
 - `WorkerMessageFailedEvent`: a worker records its failed attempt here, after the
