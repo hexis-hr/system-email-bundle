@@ -83,18 +83,8 @@ final class EmailLogWriter
                 return;
             }
 
-            $this->replaceSnapshot($correlationId, $message);
+            $this->update($correlationId, $this->describe($message) + ['updated_at' => new \DateTimeImmutable()]);
         });
-    }
-
-    /**
-     * Replaces the sender, recipients, subject and stored message with those of the
-     * message a worker attempted, after its failed transaction rolled back the
-     * replacement made by {@see startAttempt()}.
-     */
-    public function refresh(string $correlationId, Message $message): void
-    {
-        $this->atomically(fn () => $this->replaceSnapshot($correlationId, $message));
     }
 
     public function recordSent(string $correlationId, ?string $transportMessageId): void
@@ -109,16 +99,25 @@ final class EmailLogWriter
     }
 
     /**
-     * @param bool $willRetry the entry goes back to queued while Messenger retries the message
+     * A failure recorded after the entry was sent (a worker that failed records its
+     * attempt after another one delivered the retry) is only added to the history.
+     *
+     * @param bool         $willRetry the entry goes back to queued while Messenger retries the message
+     * @param Message|null $attempted the message as attempted, stored again: a worker's failed
+     *                                transaction rolled back what {@see startAttempt()} stored
      */
-    public function recordFailure(string $correlationId, string $error, bool $willRetry = false): void
+    public function recordFailure(string $correlationId, string $error, bool $willRetry = false, ?Message $attempted = null): void
     {
         $status = $willRetry ? EmailLogStatus::QUEUED : EmailLogStatus::FAILED;
 
-        $this->recordAttempt($correlationId, EmailLogStatus::FAILED, $error, new \DateTimeImmutable(), [
-            'status' => $status->value,
-            'last_error' => $error,
-        ]);
+        $this->recordAttempt(
+            $correlationId,
+            EmailLogStatus::FAILED,
+            $error,
+            new \DateTimeImmutable(),
+            ['last_error' => $error],
+            ['status' => $status->value] + ($attempted === null ? [] : $this->describe($attempted)),
+        );
     }
 
     /**
@@ -136,7 +135,8 @@ final class EmailLogWriter
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param array<string, mixed> $data       written in any case
+     * @param array<string, mixed> $unlessSent written unless the entry is sent
      */
     private function recordAttempt(
         string $correlationId,
@@ -144,8 +144,9 @@ final class EmailLogWriter
         ?string $error,
         \DateTimeImmutable $now,
         array $data,
+        array $unlessSent = [],
     ): void {
-        $this->atomically(function () use ($correlationId, $outcome, $error, $now, $data): void {
+        $this->atomically(function () use ($correlationId, $outcome, $error, $now, $data, $unlessSent): void {
             // Counting in SQL locks the row until the attempt is appended, so concurrent attempts are not lost.
             $counted = $this->connection()->executeStatement(
                 sprintf('UPDATE %s SET attempt_count = attempt_count + 1 WHERE correlation_id = ?', $this->tableName),
@@ -157,7 +158,13 @@ final class EmailLogWriter
                 return;
             }
 
-            $attempts = json_decode((string) ($this->find($correlationId)['attempts'] ?? ''), true);
+            // Read under the row lock taken above, so it is the status other workers committed.
+            $row = $this->find($correlationId);
+            if (($row['status'] ?? null) !== EmailLogStatus::SENT->value) {
+                $data += $unlessSent;
+            }
+
+            $attempts = json_decode((string) ($row['attempts'] ?? ''), true);
             $attempts = \is_array($attempts) ? $attempts : [];
             $attempts[] = ['at' => $now->format(\DATE_ATOM), 'status' => $outcome->value, 'error' => $error];
 
@@ -194,7 +201,7 @@ final class EmailLogWriter
     private function find(string $correlationId): ?array
     {
         $row = $this->connection()->fetchAssociative(
-            sprintf('SELECT attempts FROM %s WHERE correlation_id = ?', $this->tableName),
+            sprintf('SELECT attempts, status FROM %s WHERE correlation_id = ?', $this->tableName),
             [$correlationId],
         );
 
@@ -221,11 +228,6 @@ final class EmailLogWriter
             'created_at' => $now,
             'updated_at' => $now,
         ] + $this->describe($message), self::TYPES);
-    }
-
-    private function replaceSnapshot(string $correlationId, Message $message): void
-    {
-        $this->update($correlationId, $this->describe($message) + ['updated_at' => new \DateTimeImmutable()]);
     }
 
     /**

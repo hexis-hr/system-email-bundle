@@ -11,6 +11,7 @@ use Hexis\SystemEmailBundle\Entity\SystemEmailLog;
 use Hexis\SystemEmailBundle\Entity\SystemEmailRecipient;
 use Hexis\SystemEmailBundle\Entity\SystemEmailType;
 use Hexis\SystemEmailBundle\Enum\EmailLogStatus;
+use Hexis\SystemEmailBundle\EventSubscriber\EmailLogSubscriber;
 use Hexis\SystemEmailBundle\Repository\SystemEmailLogRepository;
 use Hexis\SystemEmailBundle\Service\EmailResender;
 use Hexis\SystemEmailBundle\Service\SystemEmailMailer;
@@ -19,10 +20,15 @@ use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
+use Symfony\Component\Mailer\Envelope as MailerEnvelope;
 use Symfony\Component\Mailer\Event\FailedMessageEvent;
+use Symfony\Component\Mailer\Event\MessageEvent;
+use Symfony\Component\Mailer\Exception\TransportException;
 use Symfony\Component\Mailer\Exception\TransportExceptionInterface;
 use Symfony\Component\Mailer\MailerInterface;
 use Symfony\Component\Mailer\Messenger\SendEmailMessage;
+use Symfony\Component\Messenger\Event\WorkerMessageFailedEvent;
+use Symfony\Component\Messenger\Event\WorkerMessageReceivedEvent;
 use Symfony\Component\Messenger\Stamp\ValidationStamp;
 use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 use Symfony\Component\Mime\Address;
@@ -424,6 +430,40 @@ final class EmailLogTest extends KernelTestCase
         self::assertSame(2, $entry->getAttemptCount());
         self::assertSame([['failed', 'Transport down.'], ['failed', 'Forced transport failure.']], $this->attempts($entry));
         self::assertSame('Forced transport failure.', $entry->getLastError());
+    }
+
+    public function testFailureRecordedAfterAnotherWorkerSentTheRetryKeepsTheEntrySent(): void
+    {
+        $this->boot('async');
+        $this->mailer()->send($this->email());
+        $envelope = $this->asyncTransport()->getSent()[0];
+        // The retry listener (priority 100) has queued the retry, and another worker delivers it
+        // before this worker records its failed attempt.
+        $this->consume();
+
+        $sendEmail = $envelope->getMessage();
+        self::assertInstanceOf(SendEmailMessage::class, $sendEmail);
+        $attempted = clone $sendEmail->getMessage();
+        self::assertInstanceOf(Email::class, $attempted);
+        $attempted->subject('Hello again');
+        $error = new TransportException('Forced transport failure.');
+        $connection = $this->em()->getConnection();
+        $subscriber = static::getContainer()->get(EmailLogSubscriber::class);
+        $subscriber->onWorkerReceived(new WorkerMessageReceivedEvent($envelope, 'async'));
+        // The handler runs in the doctrine_transaction middleware, which rolls back when it fails.
+        $connection->beginTransaction();
+        $subscriber->onMessage(new MessageEvent($attempted, MailerEnvelope::create($attempted), 'test://default'));
+        $subscriber->onFailed(new FailedMessageEvent($attempted, $error));
+        $connection->rollBack();
+        $failed = new WorkerMessageFailedEvent($envelope, 'async', $error);
+        $failed->setForRetry();
+        $subscriber->onWorkerFailed($failed);
+
+        $entry = $this->entries()[0];
+        self::assertSame(EmailLogStatus::SENT, $entry->getStatus());
+        self::assertSame(['sent', 'failed'], array_column($entry->getAttempts(), 'status'));
+        self::assertSame('Forced transport failure.', $entry->getLastError());
+        self::assertSame('Hello', $entry->getSubject(), 'The delivered snapshot is kept.');
     }
 
     public function testFailedQueuedEmailStoresTheAttemptedMessage(): void

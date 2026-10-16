@@ -189,11 +189,6 @@ final class EmailLogSubscriber implements EventSubscriberInterface
             return;
         }
 
-        if ($attempt !== null) {
-            // The snapshot startAttempt() took was rolled back with the handler.
-            $this->guard(fn () => $this->writer->refresh($id, $attempt));
-        }
-
         if ($errors === []) {
             $error = $event->getThrowable();
             if ($error instanceof HandlerFailedException) {
@@ -202,16 +197,19 @@ final class EmailLogSubscriber implements EventSubscriberInterface
             $errors = [$error->getMessage()];
         }
 
-        $this->recordFailures($id, $errors, $event->willRetry());
+        // The snapshot startAttempt() took was rolled back with the handler.
+        $this->recordFailures($id, $errors, $event->willRetry(), $attempt);
     }
 
     /**
      * @param list<string> $errors
+     * @param Message|null $attempted stored again with the last error
      */
-    private function recordFailures(string $id, array $errors, bool $willRetry): void
+    private function recordFailures(string $id, array $errors, bool $willRetry, ?Message $attempted = null): void
     {
-        foreach ($errors as $error) {
-            $this->guard(fn () => $this->writer->recordFailure($id, $error, $willRetry));
+        $last = array_key_last($errors);
+        foreach ($errors as $i => $error) {
+            $this->guard(fn () => $this->writer->recordFailure($id, $error, $willRetry, $i === $last ? $attempted : null));
         }
     }
 
