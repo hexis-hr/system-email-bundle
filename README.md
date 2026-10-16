@@ -10,8 +10,8 @@ The bundle owns the configuration and the recipient model. Message content
 (subject and HTML body) stays in your application code - this bundle answers
 "who receives this, and is it turned on?".
 
-Optionally it also keeps an **outgoing e-mail log**: every message sent through
-Symfony Mailer, with its status and delivery attempts, and a resend.
+Optionally it also keeps an **outgoing e-mail log** of the system e-mails it
+sends, with their status and delivery attempts, and a resend.
 
 - PHP `>= 8.1`
 - Symfony `5.4`, `6.x`, `7.x`, `8.x`
@@ -141,9 +141,10 @@ business record the e-mail is about in the e-mail log.
 ## Outgoing e-mail log
 
 Off by default. Turn it on with `mail_log.enabled: true` once the table exists
-(requires `symfony/mailer` 6.2 or later). Every e-mail sent through Symfony
-Mailer is then logged, whether it goes through `SystemEmailMailer` or
-`MailerInterface` directly, in-request or through a Messenger queue.
+(requires `symfony/mailer` 6.2 or later). The system e-mails are then logged,
+in-request or through a Messenger queue: the ones sent through
+`SystemEmailMailer::send()` and the resends of logged entries. Any other mail
+sent through Symfony Mailer is not logged and not changed.
 
 ### Migration
 
@@ -203,23 +204,17 @@ sent e-mail whose transaction rolls back loses its entry. An attempt is counted
 under a row lock, so workers that handle the same message at once lose none.
 
 **Type and reference.** `SystemEmailMailer::send()` sets the type (its key) and
-the optional `reference`. For mail you send through `MailerInterface`, add the
-headers yourself; both are removed before delivery:
-
-```php
-use Hexis\SystemEmailBundle\Entity\SystemEmailLog;
-
-$email->getHeaders()->addTextHeader(SystemEmailLog::HEADER_TYPE, 'password_reset');
-$email->getHeaders()->addTextHeader(SystemEmailLog::HEADER_REFERENCE, 'user:42');
-```
+the optional `reference` as headers; both are removed before delivery. The type
+header (`SystemEmailLog::HEADER_TYPE`) is what marks a system e-mail: a message
+without it, and without the correlation header of a resend, is left alone.
 
 Limits:
 
 - A bare `RawMessage` (not a `Mime\Message`) cannot carry the header and is not
   logged.
-- Messages queued before the log was enabled (or by a producer without this
-  bundle) carry no correlation id: each attempt gets its own entry. Drain the
-  queues, failure transport included, before enabling the log.
+- System e-mails queued before the log was enabled carry no correlation id: each
+  attempt gets its own entry. Drain the queues, failure transport included,
+  before enabling the log.
 - Without a queue, a message that fails before the transport (e.g. no From, a
   signer error) throws to the caller and its entry stays `queued`; with a
   failover/round-robin transport and no queue, each transport tried gets its own
@@ -301,7 +296,7 @@ bin/console system-email:log:purge --older-than=365   # days, 1 to 36500
 | `admin.role` | `ROLE_ADMIN` | Role required for the UI. |
 | `admin.base_template` | `@SystemEmail/layout.html.twig` | Layout the views extend (must define a `body` block). |
 | `translation_domain` | `system_email` | Domain for admin strings. |
-| `mail_log.enabled` | `false` | Log outgoing e-mail (see above). |
+| `mail_log.enabled` | `false` | Log the system e-mails (see above). |
 | `mail_log.table_name` | `system_email_log` | Table of the log entity. |
 | `types` | `[]` | The email-type registry. |
 

@@ -10,7 +10,7 @@ use Hexis\SystemEmailBundle\Repository\SystemEmailLogRepository;
 use Symfony\Component\Mime\RawMessage;
 
 /**
- * One outgoing e-mail and its delivery attempts.
+ * One outgoing system e-mail and its delivery attempts.
  *
  * Rows are written by {@see \Hexis\SystemEmailBundle\Service\EmailLogWriter}
  * through DBAL (never through the ORM unit of work, so logging never flushes the

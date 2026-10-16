@@ -1,7 +1,7 @@
 {
     "name": "hexis/system-email-bundle",
     "version": "0.1.0",
-    "description": "Configurable system emails: declare email types in YAML, manage their recipients (TO/CC/BCC) and a per-type send kill-switch in a backend UI, deliver via Symfony Mailer, and optionally log every outgoing email with resend.",
+    "description": "Configurable system emails: declare email types in YAML, manage their recipients (TO/CC/BCC) and a per-type send kill-switch in a backend UI, deliver via Symfony Mailer, and optionally log the system emails it sends, with resend.",
     "type": "symfony-bundle",
     "license": "MIT",
     "keywords": ["symfony", "mailer", "email", "recipients", "notifications", "bundle"],

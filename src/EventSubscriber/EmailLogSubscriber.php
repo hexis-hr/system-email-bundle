@@ -22,8 +22,10 @@ use Symfony\Component\Mime\Message;
 use Symfony\Component\Mime\RawMessage;
 
 /**
- * Logs every e-mail sent through Symfony Mailer, synchronously or through
- * Messenger, from Mailer and Messenger events:
+ * Logs the system e-mails sent through Symfony Mailer, synchronously or through
+ * Messenger: messages that carry the type header (SystemEmailMailer::send() sets
+ * it) and resends of logged entries (they carry the correlation id). Any other
+ * message is left as it is. From Mailer and Messenger events:
  *
  * - SendMessageToTransportsEvent: a SendEmailMessage is queued; the entry is
  *   created as queued and the message is tagged with a correlation id.
@@ -37,9 +39,10 @@ use Symfony\Component\Mime\RawMessage;
  *   middleware has rolled back by then), whether the transports or something before
  *   them failed; a message Messenger retries goes back to queued.
  *
- * The type and reference headers are always removed before delivery. Messages
- * that are not {@see Message} instances (bare RawMessage) cannot be tagged and
- * are not logged. A logging error is logged and never stops the e-mail.
+ * The type and reference headers of a system e-mail are removed before delivery,
+ * also while the log is disabled. Messages that are not {@see Message} instances
+ * (bare RawMessage) cannot be tagged and are not logged. A logging error is logged
+ * and never stops the e-mail.
  */
 final class EmailLogSubscriber implements EventSubscriberInterface
 {
@@ -84,6 +87,11 @@ final class EmailLogSubscriber implements EventSubscriberInterface
 
         $message = $sendEmail->getMessage();
         $id = $this->correlationId($message);
+        $type = $this->header($message, SystemEmailLog::HEADER_TYPE);
+        if ($id === null && $type === null) {
+            return;
+        }
+
         if ($id === null) {
             // Tag a copy so the caller's message object stays untouched.
             $message = clone $message;
@@ -95,7 +103,6 @@ final class EmailLogSubscriber implements EventSubscriberInterface
             ));
         }
 
-        $type = $this->header($message, SystemEmailLog::HEADER_TYPE);
         $reference = $this->header($message, SystemEmailLog::HEADER_REFERENCE);
         $this->guard(fn () => $this->writer->open($id, $message, $type, $reference));
     }
@@ -107,7 +114,12 @@ final class EmailLogSubscriber implements EventSubscriberInterface
             return;
         }
 
+        $id = $this->correlationId($message);
         $type = $this->header($message, SystemEmailLog::HEADER_TYPE);
+        if ($id === null && $type === null) {
+            return;
+        }
+
         $reference = $this->header($message, SystemEmailLog::HEADER_REFERENCE);
         $message->getHeaders()->remove(SystemEmailLog::HEADER_TYPE);
         $message->getHeaders()->remove(SystemEmailLog::HEADER_REFERENCE);
@@ -116,7 +128,6 @@ final class EmailLogSubscriber implements EventSubscriberInterface
             return;
         }
 
-        $id = $this->correlationId($message);
         if ($id === null) {
             $id = $this->writer->newCorrelationId();
             $message->getHeaders()->addTextHeader(SystemEmailLog::HEADER_ID, $id);

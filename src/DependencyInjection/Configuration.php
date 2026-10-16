@@ -93,7 +93,7 @@ final class Configuration implements ConfigurationInterface
                 ->end()
                 ->arrayNode('mail_log')
                     ->addDefaultsIfNotSet()
-                    ->info('Log of every outgoing e-mail sent through Symfony Mailer (sync or via Messenger), with resend.')
+                    ->info('Log of the system e-mails (sent through SystemEmailMailer, sync or via Messenger), with resend. Other mail is not logged.')
                     ->children()
                         ->booleanNode('enabled')
                             ->info('Write the log. The table is part of the bundle schema either way.')

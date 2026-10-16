@@ -76,6 +76,7 @@ final class EmailLogSubscriberTest extends TestCase
         $subscriber = new EmailLogSubscriber(new EmailLogWriter($registry, 'system_email_log'), true, $logger);
 
         $email = (new Email())->from('from@example.com')->to('to@example.com')->subject('Hello')->text('Hi');
+        $email->getHeaders()->addTextHeader(SystemEmailLog::HEADER_TYPE, 'welcome');
         $subscriber->onMessage(new MessageEvent($email, Envelope::create($email), 'test://default'));
     }
 }

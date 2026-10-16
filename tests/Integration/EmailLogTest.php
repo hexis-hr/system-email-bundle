@@ -103,6 +103,31 @@ final class EmailLogTest extends KernelTestCase
         self::assertNull($entry->getSentAt());
     }
 
+    public function testOtherMailerEmailIsNotLoggedAndArrivesUntouched(): void
+    {
+        $this->boot();
+
+        $this->mailer()->send($this->plainEmail());
+
+        self::assertSame([], $this->entries());
+        $this->assertDeliveredUntouched();
+    }
+
+    public function testOtherQueuedMailerEmailIsNotLoggedAndArrivesUntouched(): void
+    {
+        $this->boot('async');
+
+        $this->mailer()->send($this->plainEmail());
+        $queued = $this->asyncTransport()->getSent()[0]->getMessage();
+        self::assertInstanceOf(SendEmailMessage::class, $queued);
+        self::assertInstanceOf(Message::class, $queued->getMessage());
+        self::assertFalse($queued->getMessage()->getHeaders()->has(SystemEmailLog::HEADER_ID));
+        $this->consume();
+
+        self::assertSame([], $this->entries());
+        $this->assertDeliveredUntouched();
+    }
+
     public function testTypeAndReferenceAreLoggedButNotDelivered(): void
     {
         $this->boot();
@@ -169,7 +194,9 @@ final class EmailLogTest extends KernelTestCase
     {
         $this->boot('async');
         // No From: the message is rejected before it reaches the transport, so no FailedMessageEvent.
-        $this->mailer()->send((new Email())->to('to@example.com')->subject('Hello')->html('<p>Hi</p>'));
+        $email = (new Email())->to('to@example.com')->subject('Hello')->html('<p>Hi</p>');
+        $email->getHeaders()->addTextHeader(SystemEmailLog::HEADER_TYPE, 'alert');
+        $this->mailer()->send($email);
 
         $this->consume();
 
@@ -885,7 +912,10 @@ final class EmailLogTest extends KernelTestCase
         return (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
     }
 
-    private function email(string $to = 'to@example.com', ?string $type = null): Email
+    /**
+     * A system e-mail: it carries the type header, as SystemEmailMailer::send() sets it.
+     */
+    private function email(string $to = 'to@example.com', string $type = 'alert'): Email
     {
         $email = (new Email())
             ->from('Sender <from@example.com>')
@@ -893,11 +923,27 @@ final class EmailLogTest extends KernelTestCase
             ->cc('cc@example.com')
             ->subject('Hello')
             ->html('<p>Hi</p>');
-        if ($type !== null) {
-            $email->getHeaders()->addTextHeader(SystemEmailLog::HEADER_TYPE, $type);
-        }
+        $email->getHeaders()->addTextHeader(SystemEmailLog::HEADER_TYPE, $type);
 
         return $email;
+    }
+
+    /**
+     * Not a system e-mail (no type header), but it carries a reference header of its own.
+     */
+    private function plainEmail(): Email
+    {
+        $email = (new Email())->from('from@example.com')->to('to@example.com')->subject('Hello')->html('<p>Hi</p>');
+        $email->getHeaders()->addTextHeader(SystemEmailLog::HEADER_REFERENCE, 'order:7');
+
+        return $email;
+    }
+
+    private function assertDeliveredUntouched(): void
+    {
+        self::assertCount(1, TestTransport::$sent);
+        self::assertNull($this->deliveredHeader(0, SystemEmailLog::HEADER_ID));
+        self::assertSame('order:7', $this->deliveredHeader(0, SystemEmailLog::HEADER_REFERENCE));
     }
 
     /**
