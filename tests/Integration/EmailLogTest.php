@@ -296,6 +296,64 @@ final class EmailLogTest extends KernelTestCase
         self::assertSame(Command::FAILURE, $tester->execute(['id' => 'abc']));
     }
 
+    public function testArchiveOfASentEntryTakesThePlaceOfItsStoredMessage(): void
+    {
+        $this->boot();
+        $this->mailer()->send($this->email());
+        $id = $this->entries()[0]->getCorrelationId();
+
+        $this->writer()->attachArchive($id, 'archive:1');
+
+        $entry = $this->entries()[0];
+        self::assertSame('archive:1', $entry->getArchiveReference());
+        self::assertNull($entry->getStoredMessage());
+        self::assertSame('Hello', $entry->getSubject());
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('has no stored message');
+        $this->resender()->resend($entry);
+    }
+
+    public function testArchiveOfAFailedEntryKeepsItsStoredMessage(): void
+    {
+        $this->boot();
+        TestTransport::$fail = true;
+        try {
+            $this->mailer()->send($this->email());
+        } catch (TransportExceptionInterface) {
+        }
+
+        $this->writer()->attachArchive($this->entries()[0]->getCorrelationId(), 'archive:2');
+
+        $entry = $this->entries()[0];
+        self::assertSame(EmailLogStatus::FAILED, $entry->getStatus());
+        self::assertSame('archive:2', $entry->getArchiveReference());
+        self::assertInstanceOf(Email::class, $entry->getStoredMessage());
+    }
+
+    public function testArchiveLinkedBeforeTheDeliveryIsRecordedTakesThePlaceOfTheStoredMessageOnceSent(): void
+    {
+        $this->boot('async');
+        $this->mailer()->send($this->email());
+        $this->writer()->attachArchive($this->entries()[0]->getCorrelationId(), 'archive:3');
+        self::assertInstanceOf(Email::class, $this->entries()[0]->getStoredMessage(), 'A queued entry keeps it.');
+
+        $this->consume();
+
+        $entry = $this->entries()[0];
+        self::assertSame(EmailLogStatus::SENT, $entry->getStatus());
+        self::assertSame('archive:3', $entry->getArchiveReference());
+        self::assertNull($entry->getStoredMessage());
+    }
+
+    public function testArchiveReferenceHasAtMost255Characters(): void
+    {
+        $this->boot();
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->writer()->attachArchive('any', str_repeat('a', 256));
+    }
+
     public function testPurgeDeletesEntriesOlderThanTheRetention(): void
     {
         $this->boot();
@@ -989,6 +1047,11 @@ final class EmailLogTest extends KernelTestCase
     private function repository(): SystemEmailLogRepository
     {
         return static::getContainer()->get(SystemEmailLogRepository::class);
+    }
+
+    private function writer(): EmailLogWriter
+    {
+        return static::getContainer()->get(EmailLogWriter::class);
     }
 
     private function resender(): EmailResender

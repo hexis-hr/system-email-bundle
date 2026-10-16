@@ -139,6 +139,24 @@ final class EmailLogWriter
     }
 
     /**
+     * Links the entry to the copy of its e-mail in an archive, which the application
+     * keeps (this bundle depends on none). A sent entry then drops its stored message:
+     * the archive holds what was delivered. A queued or failed entry keeps it for
+     * display and resend, and drops it when it is sent. An unknown id changes nothing.
+     */
+    public function attachArchive(string $correlationId, string $reference): void
+    {
+        if (mb_strlen($reference) > 255) {
+            throw new \InvalidArgumentException('An archive reference has at most 255 characters.');
+        }
+
+        $this->atomically(fn () => $this->connection()->executeStatement(
+            sprintf('UPDATE %s SET archive_reference = ?, message = CASE WHEN status = ? THEN NULL ELSE message END WHERE correlation_id = ?', $this->tableName),
+            [$reference, EmailLogStatus::SENT->value, $correlationId],
+        ));
+    }
+
+    /**
      * Delete the entries created before the given moment.
      *
      * @return int the number of deleted entries
@@ -180,6 +198,10 @@ final class EmailLogWriter
             $row = $this->find($correlationId);
             if (($row['status'] ?? null) !== EmailLogStatus::SENT->value) {
                 $data += $unlessSent;
+                if ($outcome === EmailLogStatus::SENT && ($row['archive_reference'] ?? null) !== null) {
+                    // Archived before this delivery was recorded: the archive holds it.
+                    $data['message'] = null;
+                }
             }
 
             $attempts = json_decode((string) ($row['attempts'] ?? ''), true);
@@ -219,7 +241,7 @@ final class EmailLogWriter
     private function find(string $correlationId): ?array
     {
         $row = $this->connection()->fetchAssociative(
-            sprintf('SELECT attempts, status FROM %s WHERE correlation_id = ?', $this->tableName),
+            sprintf('SELECT attempts, status, archive_reference FROM %s WHERE correlation_id = ?', $this->tableName),
             [$correlationId],
         );
 

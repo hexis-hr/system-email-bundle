@@ -172,7 +172,8 @@ One `Hexis\SystemEmailBundle\Entity\SystemEmailLog` row per message:
 | `status` | `queued`, `sent` or `failed` (`EmailLogStatus`). A message waiting for a Messenger retry is `queued` again. `sent` is final: a later attempt (a slower worker's failure, a duplicate delivery) is only added to the attempts, and the first delivery stays on record. |
 | `attemptCount`, `attempts`, `lastError` | Number of delivery attempts; every attempt (time, status, error); the last error. |
 | `transportMessageId` | Id the transport returned for the successful attempt. |
-| `getStoredMessage()` | The message as handed to the transport (rendered, before DKIM/S/MIME signing): headers, body, attachments. Used for display and resend. |
+| `getStoredMessage()` | The message as handed to the transport (rendered, before DKIM/S/MIME signing): headers, body, attachments. Used for display and resend; dropped once an archive holds the sent e-mail (see "Archive"). |
+| `archiveReference` | Id of the e-mail in an archive your application linked (see "Archive"). |
 | `resentFrom` | The entry this one resends. |
 | `createdAt`, `updatedAt`, `sentAt` | Timestamps. |
 
@@ -274,6 +275,33 @@ $resend->getStatus();  // queued, or sent / failed when sent in-request (a trans
 bin/console system-email:log:resend 42
 bin/console system-email:log:resend 42 --to=fixed@example.com --to=other@example.com
 ```
+
+An entry without a stored message (see "Archive") cannot be resent.
+
+### Archive
+
+An e-mail archive (for example one that writes every sent e-mail to storage on
+`SentMessageEvent`) can hold the sent content instead of the log. The bundle
+depends on no archive: link one from your own listener by calling
+`EmailLogWriter::attachArchive()` with the correlation id and the archive's id
+for the e-mail. The correlation id is the `X-System-Email-Id` header
+(`SystemEmailLog::HEADER_ID`) of the delivered message, so the archived copy
+carries it too:
+
+```php
+use Hexis\SystemEmailBundle\Entity\SystemEmailLog;
+use Hexis\SystemEmailBundle\Service\EmailLogWriter;
+
+$id = $deliveredMessage->getHeaders()->getHeaderBody(SystemEmailLog::HEADER_ID);
+if (is_string($id)) {
+    $writer->attachArchive($id, $archiveId);  // getArchiveReference() returns $archiveId
+}
+```
+
+On a sent entry this drops the stored message: the archive holds what was
+delivered. A queued or failed entry keeps its stored message for display and
+resend; if it is sent later, the message is dropped then. The order of your
+listener and the log's on `SentMessageEvent` does not matter.
 
 ### Retention
 

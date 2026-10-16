@@ -80,6 +80,10 @@ class SystemEmailLog
     #[ORM\Column(name: 'message', type: 'text', nullable: true)]
     private ?string $storedMessage = null;
 
+    /** Id of the e-mail in an archive the application links, see EmailLogWriter::attachArchive(). */
+    #[ORM\Column(name: 'archive_reference', type: 'string', length: 255, nullable: true)]
+    private ?string $archiveReference = null;
+
     #[ORM\ManyToOne(targetEntity: self::class)]
     #[ORM\JoinColumn(name: 'resent_from_id', referencedColumnName: 'id', nullable: true, onDelete: 'SET NULL')]
     private ?SystemEmailLog $resentFrom = null;
@@ -160,7 +164,7 @@ class SystemEmailLog
 
     /**
      * The message as it was handed to the transport (rendered, before signing),
-     * or null when it could not be stored.
+     * or null when it could not be stored or an archive holds the sent e-mail.
      */
     public function getStoredMessage(): ?RawMessage
     {
@@ -179,6 +183,11 @@ class SystemEmailLog
     }
 
     /** The entry this one resends, if it is a resend. */
+    public function getArchiveReference(): ?string
+    {
+        return $this->archiveReference;
+    }
+
     public function getResentFrom(): ?SystemEmailLog
     {
         return $this->resentFrom;
