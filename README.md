@@ -193,8 +193,10 @@ How it is fed, from Mailer and Messenger events:
 Rows are written through DBAL on the entity manager's connection, never through
 the ORM unit of work, so logging never flushes your pending changes; the
 statements join whatever transaction is open, like the Doctrine Messenger
-transport. Send mail outside your business transactions (or queue it on that
-connection): a sent e-mail whose transaction rolls back loses its entry.
+transport, in a savepoint: a log write that fails is rolled back alone and leaves
+your transaction usable (PostgreSQL aborts a transaction on a failed statement).
+Send mail outside your business transactions (or queue it on that connection): a
+sent e-mail whose transaction rolls back loses its entry.
 
 **Type and reference.** `SystemEmailMailer::send()` sets the type (its key) and
 the optional `reference`. For mail you send through `MailerInterface`, add the

@@ -22,10 +22,14 @@ use Symfony\Component\Mime\Message;
  *
  * DBAL rather than the ORM: a flush from a mailer listener would also flush the
  * application's pending changes. The statements join whatever transaction is open
- * on the connection, like the Doctrine Messenger transport does.
+ * on the connection, like the Doctrine Messenger transport does, in a savepoint:
+ * a failed log write is rolled back alone and does not leave that transaction
+ * aborted (PostgreSQL). Without an open transaction each write has its own.
  */
 final class EmailLogWriter
 {
+    private const SAVEPOINT = 'system_email_log';
+
     private const TYPES = [
         'resent_from_id' => Types::INTEGER,
         'attempt_count' => Types::INTEGER,
@@ -57,9 +61,11 @@ final class EmailLogWriter
         ?string $reference,
         ?int $resentFromId = null,
     ): void {
-        if ($this->find($correlationId) === null) {
-            $this->insert($correlationId, $message, $type, $reference, $resentFromId);
-        }
+        $this->atomically(function () use ($correlationId, $message, $type, $reference, $resentFromId): void {
+            if ($this->find($correlationId) === null) {
+                $this->insert($correlationId, $message, $type, $reference, $resentFromId);
+            }
+        });
     }
 
     /**
@@ -69,18 +75,20 @@ final class EmailLogWriter
      */
     public function startAttempt(string $correlationId, Message $message, ?string $type, ?string $reference): void
     {
-        $row = $this->find($correlationId);
-        if ($row === null) {
-            $this->insert($correlationId, $message, $type, $reference, null);
+        $this->atomically(function () use ($correlationId, $message, $type, $reference): void {
+            $row = $this->find($correlationId);
+            if ($row === null) {
+                $this->insert($correlationId, $message, $type, $reference, null);
 
-            return;
-        }
+                return;
+            }
 
-        if ((int) $row['attempt_count'] > 0) {
-            return;
-        }
+            if ((int) $row['attempt_count'] > 0) {
+                return;
+            }
 
-        $this->update($correlationId, $this->describe($message) + ['updated_at' => new \DateTimeImmutable()]);
+            $this->update($correlationId, $this->describe($message) + ['updated_at' => new \DateTimeImmutable()]);
+        });
     }
 
     public function recordSent(string $correlationId, ?string $transportMessageId): void
@@ -131,22 +139,47 @@ final class EmailLogWriter
         \DateTimeImmutable $now,
         array $data,
     ): void {
-        $row = $this->find($correlationId);
-        if ($row === null) {
-            $this->logger?->warning('No e-mail log entry for correlation id {id}; attempt not recorded.', ['id' => $correlationId]);
+        $this->atomically(function () use ($correlationId, $outcome, $error, $now, $data): void {
+            $row = $this->find($correlationId);
+            if ($row === null) {
+                $this->logger?->warning('No e-mail log entry for correlation id {id}; attempt not recorded.', ['id' => $correlationId]);
+
+                return;
+            }
+
+            $attempts = json_decode((string) $row['attempts'], true);
+            $attempts = \is_array($attempts) ? $attempts : [];
+            $attempts[] = ['at' => $now->format(\DATE_ATOM), 'status' => $outcome->value, 'error' => $error];
+
+            $this->update($correlationId, $data + [
+                'attempt_count' => (int) $row['attempt_count'] + 1,
+                'attempts' => $attempts,
+                'updated_at' => $now,
+            ]);
+        });
+    }
+
+    /**
+     * Runs a log write in a savepoint of the open transaction, or in a transaction of its own.
+     */
+    private function atomically(\Closure $write): void
+    {
+        $connection = $this->connection();
+        if (!$connection->isTransactionActive()) {
+            $connection->transactional($write);
 
             return;
         }
 
-        $attempts = json_decode((string) $row['attempts'], true);
-        $attempts = \is_array($attempts) ? $attempts : [];
-        $attempts[] = ['at' => $now->format(\DATE_ATOM), 'status' => $outcome->value, 'error' => $error];
+        $connection->createSavepoint(self::SAVEPOINT);
+        try {
+            $write();
+        } catch (\Throwable $e) {
+            $connection->rollbackSavepoint(self::SAVEPOINT);
 
-        $this->update($correlationId, $data + [
-            'attempt_count' => (int) $row['attempt_count'] + 1,
-            'attempts' => $attempts,
-            'updated_at' => $now,
-        ]);
+            throw $e;
+        }
+        $connection->releaseSavepoint(self::SAVEPOINT);
     }
 
     /**
