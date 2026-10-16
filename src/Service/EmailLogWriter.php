@@ -100,8 +100,11 @@ final class EmailLogWriter
     /**
      * On an entry that is already sent (a duplicate delivery), the attempt is only
      * added to the history: the first delivery stays on record.
+     *
+     * @param Message|null $delivered the message as the transport sent it (before signing), stored
+     *                                with the delivery: an overlapping attempt may have replaced it
      */
-    public function recordSent(string $correlationId, ?string $transportMessageId): void
+    public function recordSent(string $correlationId, ?string $transportMessageId, ?Message $delivered = null): void
     {
         $now = new \DateTimeImmutable();
 
@@ -109,7 +112,7 @@ final class EmailLogWriter
             'status' => EmailLogStatus::SENT->value,
             'sent_at' => $now,
             'transport_message_id' => $this->limit($transportMessageId, 255),
-        ]);
+        ] + ($delivered === null ? [] : $this->describe($delivered)));
     }
 
     /**

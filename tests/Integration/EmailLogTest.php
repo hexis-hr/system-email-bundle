@@ -13,6 +13,7 @@ use Hexis\SystemEmailBundle\Entity\SystemEmailType;
 use Hexis\SystemEmailBundle\Enum\EmailLogStatus;
 use Hexis\SystemEmailBundle\EventSubscriber\EmailLogSubscriber;
 use Hexis\SystemEmailBundle\Repository\SystemEmailLogRepository;
+use Hexis\SystemEmailBundle\Service\EmailLogWriter;
 use Hexis\SystemEmailBundle\Service\EmailResender;
 use Hexis\SystemEmailBundle\Service\SystemEmailMailer;
 use Hexis\SystemEmailBundle\Service\SystemEmailManager;
@@ -506,6 +507,41 @@ final class EmailLogTest extends KernelTestCase
         self::assertInstanceOf(Message::class, $stored);
         self::assertSame('Hello', $stored->getHeaders()->getHeaderBody('Subject'));
         self::assertSame($delivered->getTransportMessageId(), $entry->getTransportMessageId());
+    }
+
+    public function testOverlappingDeliveriesKeepTheMessageThatWasSent(): void
+    {
+        $this->boot('async');
+        $this->mailer()->send($this->email());
+        $envelope = $this->asyncTransport()->getSent()[0];
+        $sendEmail = $envelope->getMessage();
+        self::assertInstanceOf(SendEmailMessage::class, $sendEmail);
+        // Two workers without doctrine_transaction deliver the same queued message at once.
+        $workerA = static::getContainer()->get(EmailLogSubscriber::class);
+        $workerB = new EmailLogSubscriber(static::getContainer()->get(EmailLogWriter::class), true);
+        $attempts = [];
+        foreach (['A' => $workerA, 'B' => $workerB] as $name => $worker) {
+            $attempted = clone $sendEmail->getMessage();
+            self::assertInstanceOf(Email::class, $attempted);
+            $attempts[$name] = $attempted->subject('Attempt ' . $name);
+            $worker->onWorkerReceived(new WorkerMessageReceivedEvent($envelope, 'async'));
+            $worker->onMessage(new MessageEvent($attempted, MailerEnvelope::create($attempted), 'test://default'));
+        }
+
+        // A is sent, then B fails.
+        $workerA->onSent(new SentMessageEvent(new SentMessage($attempts['A'], MailerEnvelope::create($attempts['A']))));
+        $workerA->onWorkerHandled(new WorkerMessageHandledEvent($envelope, 'async'));
+        $error = new TransportException('Forced transport failure.');
+        $workerB->onFailed(new FailedMessageEvent($attempts['B'], $error));
+        $workerB->onWorkerFailed(new WorkerMessageFailedEvent($envelope, 'async', $error));
+
+        $entry = $this->entries()[0];
+        self::assertSame(EmailLogStatus::SENT, $entry->getStatus());
+        self::assertSame(['sent', 'failed'], array_column($entry->getAttempts(), 'status'));
+        self::assertSame('Attempt A', $entry->getSubject());
+        $stored = $entry->getStoredMessage();
+        self::assertInstanceOf(Message::class, $stored);
+        self::assertSame('Attempt A', $stored->getHeaders()->getHeaderBody('Subject'));
     }
 
     public function testFailedQueuedEmailStoresTheAttemptedMessage(): void

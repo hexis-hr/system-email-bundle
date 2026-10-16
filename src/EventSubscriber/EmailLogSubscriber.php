@@ -49,7 +49,7 @@ final class EmailLogSubscriber implements EventSubscriberInterface
     /** @var list<string> Transport errors of that message, not recorded yet. */
     private array $workerTransportErrors = [];
 
-    /** That message as a transport last attempted it, stored again if the worker fails. */
+    /** That message as a transport last attempted it, stored again when it is sent or the worker fails. */
     private ?Message $workerAttempt = null;
 
     public function __construct(
@@ -137,13 +137,16 @@ final class EmailLogSubscriber implements EventSubscriberInterface
             return;
         }
 
+        $delivered = null;
         if ($id === $this->workerMessageId) {
             // Failover: the transports that failed before this one.
             $this->recordFailures($id, $this->workerTransportErrors, false);
             $this->workerTransportErrors = [];
+            // Another worker delivering the same message may have stored its attempt since.
+            $delivered = $this->workerAttempt;
         }
 
-        $this->guard(fn () => $this->writer->recordSent($id, $sent->getMessageId()));
+        $this->guard(fn () => $this->writer->recordSent($id, $sent->getMessageId(), $delivered));
     }
 
     public function onFailed(FailedMessageEvent $event): void
