@@ -168,7 +168,7 @@ One `Hexis\SystemEmailBundle\Entity\SystemEmailLog` row per message:
 | `correlationId` | Id carried by the message in the `X-System-Email-Id` header; ties the queueing and every attempt to one row. |
 | `type`, `reference` | System e-mail type key and the record the e-mail is about (see below). |
 | `sender`, `recipients`, `subject` | From; To, Cc and Bcc addresses, comma-separated; subject. |
-| `status` | `queued`, `sent` or `failed` (`EmailLogStatus`). A message waiting for a Messenger retry is `queued` again. `sent` is final: a failure recorded later (by a worker slower than the one that delivered the retry) is only added to the attempts. |
+| `status` | `queued`, `sent` or `failed` (`EmailLogStatus`). A message waiting for a Messenger retry is `queued` again. `sent` is final: a later attempt (a slower worker's failure, a duplicate delivery) is only added to the attempts, and the first delivery stays on record. |
 | `attemptCount`, `attempts`, `lastError` | Number of delivery attempts; every attempt (time, status, error); the last error. |
 | `transportMessageId` | Id the transport returned for the successful attempt. |
 | `getStoredMessage()` | The message as handed to the transport (rendered, before DKIM/S/MIME signing): headers, body, attachments. Used for display and resend. |

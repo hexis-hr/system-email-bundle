@@ -72,7 +72,8 @@ final class EmailLogWriter
      * Called right before a transport attempt. Creates the entry of a message sent
      * without a queue; before every attempt of a queued message, replaces the
      * sender, recipients, subject and stored message with the final (rendered) ones
-     * (a worker transaction that failed rolled back the earlier replacement).
+     * (a worker transaction that failed rolled back the earlier replacement), unless
+     * the entry is sent: a duplicate delivery does not replace what was delivered.
      */
     public function startAttempt(string $correlationId, Message $message, ?string $type, ?string $reference): void
     {
@@ -83,15 +84,28 @@ final class EmailLogWriter
                 return;
             }
 
-            $this->update($correlationId, $this->describe($message) + ['updated_at' => new \DateTimeImmutable()]);
+            $snapshot = $this->describe($message) + ['updated_at' => new \DateTimeImmutable()];
+            $this->connection()->executeStatement(
+                sprintf(
+                    'UPDATE %s SET %s WHERE correlation_id = ? AND status <> ?',
+                    $this->tableName,
+                    implode(', ', array_map(static fn (string $column): string => $column . ' = ?', array_keys($snapshot))),
+                ),
+                [...array_values($snapshot), $correlationId, EmailLogStatus::SENT->value],
+                [...array_map(static fn (string $column): string => self::TYPES[$column] ?? Types::STRING, array_keys($snapshot)), Types::STRING, Types::STRING],
+            );
         });
     }
 
+    /**
+     * On an entry that is already sent (a duplicate delivery), the attempt is only
+     * added to the history: the first delivery stays on record.
+     */
     public function recordSent(string $correlationId, ?string $transportMessageId): void
     {
         $now = new \DateTimeImmutable();
 
-        $this->recordAttempt($correlationId, EmailLogStatus::SENT, null, $now, [
+        $this->recordAttempt($correlationId, EmailLogStatus::SENT, null, $now, [], [
             'status' => EmailLogStatus::SENT->value,
             'sent_at' => $now,
             'transport_message_id' => $this->limit($transportMessageId, 255),
@@ -100,7 +114,8 @@ final class EmailLogWriter
 
     /**
      * A failure recorded after the entry was sent (a worker that failed records its
-     * attempt after another one delivered the retry) is only added to the history.
+     * attempt after another one delivered the retry, or a duplicate delivery failed)
+     * is only added to the history.
      *
      * @param bool         $willRetry the entry goes back to queued while Messenger retries the message
      * @param Message|null $attempted the message as attempted, stored again: a worker's failed

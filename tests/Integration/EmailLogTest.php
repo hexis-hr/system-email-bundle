@@ -23,11 +23,14 @@ use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\Mailer\Envelope as MailerEnvelope;
 use Symfony\Component\Mailer\Event\FailedMessageEvent;
 use Symfony\Component\Mailer\Event\MessageEvent;
+use Symfony\Component\Mailer\Event\SentMessageEvent;
 use Symfony\Component\Mailer\Exception\TransportException;
 use Symfony\Component\Mailer\Exception\TransportExceptionInterface;
 use Symfony\Component\Mailer\MailerInterface;
 use Symfony\Component\Mailer\Messenger\SendEmailMessage;
+use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Messenger\Event\WorkerMessageFailedEvent;
+use Symfony\Component\Messenger\Event\WorkerMessageHandledEvent;
 use Symfony\Component\Messenger\Event\WorkerMessageReceivedEvent;
 use Symfony\Component\Messenger\Stamp\ValidationStamp;
 use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
@@ -464,6 +467,45 @@ final class EmailLogTest extends KernelTestCase
         self::assertSame(['sent', 'failed'], array_column($entry->getAttempts(), 'status'));
         self::assertSame('Forced transport failure.', $entry->getLastError());
         self::assertSame('Hello', $entry->getSubject(), 'The delivered snapshot is kept.');
+    }
+
+    public function testDuplicateDeliveriesLeaveTheSentEntryAsDelivered(): void
+    {
+        $this->boot('async');
+        $this->mailer()->send($this->email());
+        $envelope = $this->asyncTransport()->getSent()[0];
+        $this->consume();
+        $delivered = $this->entries()[0];
+        $sendEmail = $envelope->getMessage();
+        self::assertInstanceOf(SendEmailMessage::class, $sendEmail);
+        $subscriber = static::getContainer()->get(EmailLogSubscriber::class);
+
+        // Two more deliveries of the queued message by a worker without doctrine_transaction (nothing is
+        // rolled back), each attempting a changed subject: the first fails, the second is sent again.
+        foreach ([true, false] as $fail) {
+            $attempted = clone $sendEmail->getMessage();
+            self::assertInstanceOf(Email::class, $attempted);
+            $attempted->subject('Hello again');
+            $subscriber->onWorkerReceived(new WorkerMessageReceivedEvent($envelope, 'async'));
+            $subscriber->onMessage(new MessageEvent($attempted, MailerEnvelope::create($attempted), 'test://default'));
+            if ($fail) {
+                $error = new TransportException('Forced transport failure.');
+                $subscriber->onFailed(new FailedMessageEvent($attempted, $error));
+                $subscriber->onWorkerFailed(new WorkerMessageFailedEvent($envelope, 'async', $error));
+            } else {
+                $subscriber->onSent(new SentMessageEvent(new SentMessage($attempted, MailerEnvelope::create($attempted))));
+                $subscriber->onWorkerHandled(new WorkerMessageHandledEvent($envelope, 'async'));
+            }
+        }
+
+        $entry = $this->entries()[0];
+        self::assertSame(EmailLogStatus::SENT, $entry->getStatus());
+        self::assertSame(['sent', 'failed', 'sent'], array_column($entry->getAttempts(), 'status'));
+        self::assertSame('Hello', $entry->getSubject(), 'The first delivery stays on record.');
+        $stored = $entry->getStoredMessage();
+        self::assertInstanceOf(Message::class, $stored);
+        self::assertSame('Hello', $stored->getHeaders()->getHeaderBody('Subject'));
+        self::assertSame($delivered->getTransportMessageId(), $entry->getTransportMessageId());
     }
 
     public function testFailedQueuedEmailStoresTheAttemptedMessage(): void
