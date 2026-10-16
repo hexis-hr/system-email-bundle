@@ -83,8 +83,18 @@ final class EmailLogWriter
                 return;
             }
 
-            $this->update($correlationId, $this->describe($message) + ['updated_at' => new \DateTimeImmutable()]);
+            $this->replaceSnapshot($correlationId, $message);
         });
+    }
+
+    /**
+     * Replaces the sender, recipients, subject and stored message with those of the
+     * message a worker attempted, after its failed transaction rolled back the
+     * replacement made by {@see startAttempt()}.
+     */
+    public function refresh(string $correlationId, Message $message): void
+    {
+        $this->atomically(fn () => $this->replaceSnapshot($correlationId, $message));
     }
 
     public function recordSent(string $correlationId, ?string $transportMessageId): void
@@ -211,6 +221,11 @@ final class EmailLogWriter
             'created_at' => $now,
             'updated_at' => $now,
         ] + $this->describe($message), self::TYPES);
+    }
+
+    private function replaceSnapshot(string $correlationId, Message $message): void
+    {
+        $this->update($correlationId, $this->describe($message) + ['updated_at' => new \DateTimeImmutable()]);
     }
 
     /**

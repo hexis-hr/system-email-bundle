@@ -32,10 +32,10 @@ use Symfony\Component\Mime\RawMessage;
  * - SentMessageEvent / FailedMessageEvent: the attempt is recorded. In a worker a
  *   failed attempt is kept until the next transport (failover) sends the message,
  *   or until the worker reports the failure.
- * - WorkerMessageFailedEvent: a worker's failed attempts are recorded here, after the
- *   handler is done (a doctrine_transaction middleware has rolled back by then),
- *   whether the transports or something before them failed; a message Messenger
- *   retries goes back to queued.
+ * - WorkerMessageFailedEvent: a worker's failed attempts, and the message as last
+ *   attempted, are recorded here, after the handler is done (a doctrine_transaction
+ *   middleware has rolled back by then), whether the transports or something before
+ *   them failed; a message Messenger retries goes back to queued.
  *
  * The type and reference headers are always removed before delivery. Messages
  * that are not {@see Message} instances (bare RawMessage) cannot be tagged and
@@ -48,6 +48,9 @@ final class EmailLogSubscriber implements EventSubscriberInterface
 
     /** @var list<string> Transport errors of that message, not recorded yet. */
     private array $workerTransportErrors = [];
+
+    /** That message as a transport last attempted it, stored again if the worker fails. */
+    private ?Message $workerAttempt = null;
 
     public function __construct(
         private EmailLogWriter $writer,
@@ -119,6 +122,10 @@ final class EmailLogSubscriber implements EventSubscriberInterface
             $message->getHeaders()->addTextHeader(SystemEmailLog::HEADER_ID, $id);
         }
 
+        if ($id === $this->workerMessageId) {
+            $this->workerAttempt = $message;
+        }
+
         $this->guard(fn () => $this->writer->startAttempt($id, $message, $type, $reference));
     }
 
@@ -159,22 +166,32 @@ final class EmailLogSubscriber implements EventSubscriberInterface
     {
         $this->workerMessageId = $this->workerMessageId($event->getEnvelope());
         $this->workerTransportErrors = [];
+        $this->workerAttempt = null;
     }
 
     public function onWorkerHandled(WorkerMessageHandledEvent $event): void
     {
         $this->workerMessageId = null;
         $this->workerTransportErrors = [];
+        $this->workerAttempt = null;
     }
 
     public function onWorkerFailed(WorkerMessageFailedEvent $event): void
     {
         $id = $this->workerMessageId($event->getEnvelope());
-        $errors = $id !== null && $id === $this->workerMessageId ? $this->workerTransportErrors : [];
+        $current = $id !== null && $id === $this->workerMessageId;
+        $errors = $current ? $this->workerTransportErrors : [];
+        $attempt = $current ? $this->workerAttempt : null;
         $this->workerMessageId = null;
         $this->workerTransportErrors = [];
+        $this->workerAttempt = null;
         if ($id === null) {
             return;
+        }
+
+        if ($attempt !== null) {
+            // The snapshot startAttempt() took was rolled back with the handler.
+            $this->guard(fn () => $this->writer->refresh($id, $attempt));
         }
 
         if ($errors === []) {

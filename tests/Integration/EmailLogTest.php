@@ -426,6 +426,25 @@ final class EmailLogTest extends KernelTestCase
         self::assertSame('Forced transport failure.', $entry->getLastError());
     }
 
+    public function testFailedQueuedEmailStoresTheAttemptedMessage(): void
+    {
+        $this->boot('async');
+        $this->createWelcomeType();
+        TestTransport::$fail = true;
+        $this->sendWelcome();
+
+        // Both attempts fail, and each worker transaction rolls back the snapshot it took.
+        $this->consume();
+        $this->consume();
+
+        $entry = $this->entries()[0];
+        self::assertSame(EmailLogStatus::FAILED, $entry->getStatus());
+        $stored = $entry->getStoredMessage();
+        self::assertInstanceOf(Message::class, $stored);
+        self::assertFalse($stored->getHeaders()->has(SystemEmailLog::HEADER_TYPE), 'The stored message is the attempted one, not the queued one.');
+        self::assertSame('welcome', $entry->getType());
+    }
+
     public function testDisabledLogWritesNothingAndStillStripsTheLogHeaders(): void
     {
         $this->boot('nolog');
