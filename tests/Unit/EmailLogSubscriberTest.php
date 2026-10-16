@@ -9,6 +9,7 @@ use Hexis\SystemEmailBundle\Entity\SystemEmailLog;
 use Hexis\SystemEmailBundle\EventSubscriber\EmailLogSubscriber;
 use Hexis\SystemEmailBundle\Service\EmailLogWriter;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\Mailer\Envelope;
 use Symfony\Component\Mailer\Event\MessageEvent;
 use Symfony\Component\Mime\Email;
@@ -30,5 +31,27 @@ final class EmailLogSubscriberTest extends TestCase
         self::assertFalse($email->getHeaders()->has(SystemEmailLog::HEADER_TYPE));
         self::assertFalse($email->getHeaders()->has(SystemEmailLog::HEADER_REFERENCE));
         self::assertFalse($email->getHeaders()->has(SystemEmailLog::HEADER_ID));
+    }
+
+    public function testLogWriteFailureIsReportedAndDoesNotStopTheEmail(): void
+    {
+        $registry = $this->createMock(ManagerRegistry::class);
+        $registry->method('getManagerForClass')->willReturn(null);
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::once())
+            ->method('error')
+            ->with(
+                'Could not write the e-mail log: {message}',
+                self::callback(static fn (array $context): bool => $context['exception'] instanceof \LogicException),
+            );
+        $subscriber = new EmailLogSubscriber(new EmailLogWriter($registry, 'system_email_log'), true, $logger);
+
+        $email = (new Email())->from('from@example.com')->to('to@example.com')->subject('Hello')->text('Hi');
+        $email->getHeaders()->addTextHeader(SystemEmailLog::HEADER_TYPE, 'welcome');
+
+        $subscriber->onMessage(new MessageEvent($email, Envelope::create($email), 'test://default'));
+
+        self::assertFalse($email->getHeaders()->has(SystemEmailLog::HEADER_TYPE));
+        self::assertTrue($email->getHeaders()->has(SystemEmailLog::HEADER_ID), 'The attempts still share one correlation id.');
     }
 }

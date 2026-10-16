@@ -14,6 +14,7 @@ use Symfony\Bundle\TwigBundle\TwigBundle;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\HttpKernel\Kernel;
+use Symfony\Component\Mailer\Event\FailedMessageEvent;
 use Symfony\Component\Mailer\Messenger\SendEmailMessage;
 use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 
@@ -21,10 +22,14 @@ use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
  * Minimal kernel for integration testing the bundle.
  *
  * Framework config is version-guarded so it boots on Symfony 5.4 -> 8. Doctrine
- * runs against an in-memory SQLite database; the mailer uses {@see TestTransport}.
- * In the "async" environment e-mail is queued on an in-memory Messenger transport
+ * runs against an in-memory SQLite database, or the database named by the
+ * SYSTEM_EMAIL_TEST_DATABASE_URL environment variable (resolved at runtime, so one
+ * compiled container serves both); the mailer uses {@see TestTransport}.
+ * In the "async" environments e-mail is queued on an in-memory Messenger transport
  * (one retry) and handled inside the doctrine_transaction middleware, which rolls
  * back what the handler wrote when it fails; otherwise it is handled synchronously.
+ * The e-mail log is on, except in the "nolog" environments and on symfony/mailer
+ * before 6.2, which it does not support.
  */
 final class TestKernel extends Kernel
 {
@@ -55,7 +60,7 @@ final class TestKernel extends Kernel
             $framework['handle_all_throwables'] = true;
         }
 
-        if ($this->environment === 'async') {
+        if (str_contains($this->environment, 'async')) {
             $framework['messenger'] = [
                 'buses' => [
                     'messenger.bus.default' => ['middleware' => ['doctrine_transaction']],
@@ -84,10 +89,10 @@ final class TestKernel extends Kernel
             ? ['auto_generate_proxy_classes' => true]
             : [];
 
+        $container->setParameter('env(SYSTEM_EMAIL_TEST_DATABASE_URL)', 'sqlite:///:memory:');
         $container->loadFromExtension('doctrine', [
             'dbal' => [
-                'driver' => 'pdo_sqlite',
-                'url' => 'sqlite:///:memory:',
+                'url' => '%env(SYSTEM_EMAIL_TEST_DATABASE_URL)%',
             ],
             'orm' => $orm,
         ]);
@@ -98,7 +103,7 @@ final class TestKernel extends Kernel
 
         $container->loadFromExtension('system_email', [
             'mail_log' => [
-                'enabled' => true,
+                'enabled' => !str_contains($this->environment, 'nolog') && class_exists(FailedMessageEvent::class),
                 'table_name' => 'test_email_log',
             ],
             'types' => [

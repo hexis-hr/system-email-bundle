@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hexis\SystemEmailBundle\Tests\Unit;
 
 use Doctrine\ORM\EntityManagerInterface;
+use Hexis\SystemEmailBundle\Entity\SystemEmailLog;
 use Hexis\SystemEmailBundle\Entity\SystemEmailRecipient;
 use Hexis\SystemEmailBundle\Entity\SystemEmailType;
 use Hexis\SystemEmailBundle\Repository\SystemEmailRecipientRepository;
@@ -69,6 +70,30 @@ final class SystemEmailMailerTest extends TestCase
         self::assertSame('to@example.com', $captured->getTo()[0]->getAddress());
         self::assertSame('cc@example.com', $captured->getCc()[0]->getAddress());
         self::assertSame('bcc@example.com', $captured->getBcc()[0]->getAddress());
+    }
+
+    public function testNoReferenceHeaderWithoutAReference(): void
+    {
+        $manager = $this->manager(new SystemEmailType('active', 'Active', true), [
+            $this->recipient('to@example.com', 'To Person', 'to'),
+        ]);
+
+        $captured = [];
+        $mailer = $this->createMock(MailerInterface::class);
+        $mailer->expects(self::exactly(2))
+            ->method('send')
+            ->willReturnCallback(static function (Email $message) use (&$captured): void {
+                $captured[] = $message;
+            });
+
+        $service = new SystemEmailMailer($manager, $mailer, null, false, 'from@example.com', 'From');
+
+        self::assertTrue($service->send('active', 'Subject', '<p>Body</p>'));
+        self::assertTrue($service->send('active', 'Subject', '<p>Body</p>', reference: ''));
+        foreach ($captured as $message) {
+            self::assertSame('active', $message->getHeaders()->getHeaderBody(SystemEmailLog::HEADER_TYPE));
+            self::assertFalse($message->getHeaders()->has(SystemEmailLog::HEADER_REFERENCE));
+        }
     }
 
     /**
