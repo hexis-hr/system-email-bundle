@@ -57,9 +57,9 @@ class SystemEmailLog
     #[ORM\Column(name: 'subject', type: 'text', nullable: true)]
     private ?string $subject = null;
 
-    /** Backing value of {@see EmailLogStatus}. */
+    /** Backing value of {@see EmailLogStatus}; QUEUED as a literal, PHP 8.1 cannot read ->value in a default. */
     #[ORM\Column(name: 'status', type: 'string', length: 10)]
-    private string $status = EmailLogStatus::QUEUED->value;
+    private string $status = 'queued';
 
     #[ORM\Column(name: 'attempt_count', type: 'integer', options: ['default' => 0])]
     private int $attemptCount = 0;

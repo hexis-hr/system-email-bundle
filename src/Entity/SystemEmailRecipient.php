@@ -35,10 +35,10 @@ class SystemEmailRecipient
     #[Assert\NotBlank]
     private string $name = '';
 
-    /** Backing value of {@see RecipientType}. */
+    /** Backing value of {@see RecipientType}; TO as a literal, PHP 8.1 cannot read ->value in a default. */
     #[ORM\Column(name: 'recipient_type', type: 'string', length: 10)]
     #[Assert\Choice(callback: [RecipientType::class, 'choices'])]
-    private string $recipientType = RecipientType::TO->value;
+    private string $recipientType = 'to';
 
     #[ORM\Column(type: 'boolean', options: ['default' => true])]
     private bool $active = true;
