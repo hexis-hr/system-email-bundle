@@ -140,22 +140,22 @@ final class EmailLogWriter
         array $data,
     ): void {
         $this->atomically(function () use ($correlationId, $outcome, $error, $now, $data): void {
-            $row = $this->find($correlationId);
-            if ($row === null) {
+            // Counting in SQL locks the row until the attempt is appended, so concurrent attempts are not lost.
+            $counted = $this->connection()->executeStatement(
+                sprintf('UPDATE %s SET attempt_count = attempt_count + 1 WHERE correlation_id = ?', $this->tableName),
+                [$correlationId],
+            );
+            if ($counted === 0) {
                 $this->logger?->warning('No e-mail log entry for correlation id {id}; attempt not recorded.', ['id' => $correlationId]);
 
                 return;
             }
 
-            $attempts = json_decode((string) $row['attempts'], true);
+            $attempts = json_decode((string) ($this->find($correlationId)['attempts'] ?? ''), true);
             $attempts = \is_array($attempts) ? $attempts : [];
             $attempts[] = ['at' => $now->format(\DATE_ATOM), 'status' => $outcome->value, 'error' => $error];
 
-            $this->update($correlationId, $data + [
-                'attempt_count' => (int) $row['attempt_count'] + 1,
-                'attempts' => $attempts,
-                'updated_at' => $now,
-            ]);
+            $this->update($correlationId, $data + ['attempts' => $attempts, 'updated_at' => $now]);
         });
     }
 

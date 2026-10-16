@@ -196,7 +196,8 @@ statements join whatever transaction is open, like the Doctrine Messenger
 transport, in a savepoint: a log write that fails is rolled back alone and leaves
 your transaction usable (PostgreSQL aborts a transaction on a failed statement).
 Send mail outside your business transactions (or queue it on that connection): a
-sent e-mail whose transaction rolls back loses its entry.
+sent e-mail whose transaction rolls back loses its entry. An attempt is counted
+under a row lock, so workers that handle the same message at once lose none.
 
 **Type and reference.** `SystemEmailMailer::send()` sets the type (its key) and
 the optional `reference`. For mail you send through `MailerInterface`, add the
