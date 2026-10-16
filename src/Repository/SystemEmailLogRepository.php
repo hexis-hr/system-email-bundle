@@ -64,7 +64,9 @@ class SystemEmailLogRepository extends ServiceEntityRepository
         }
 
         if ($recipient !== null && $recipient !== '') {
-            $qb->andWhere('l.recipients LIKE :recipient')->setParameter('recipient', '%' . $recipient . '%');
+            // _ and % are literal address characters here; ! escapes them on every platform.
+            $literal = strtr($recipient, ['!' => '!!', '%' => '!%', '_' => '!_']);
+            $qb->andWhere("l.recipients LIKE :recipient ESCAPE '!'")->setParameter('recipient', '%' . $literal . '%');
         }
 
         if ($since !== null) {

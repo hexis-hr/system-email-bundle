@@ -672,6 +672,19 @@ final class EmailLogTest extends KernelTestCase
         self::assertCount(3, $repository->search(type: '', recipient: ''), 'Empty filters are ignored.');
     }
 
+    public function testRecipientSearchMatchesWildcardCharactersLiterally(): void
+    {
+        $this->boot();
+        $this->mailer()->send($this->email('jane_doe@example.com'));
+        $this->mailer()->send($this->email('jane-doe@example.com'));
+        $this->mailer()->send($this->email('jane!doe@example.com'));
+        $repository = $this->repository();
+
+        self::assertSame(['jane_doe'], $this->firstRecipients($repository->search(recipient: 'jane_doe')));
+        self::assertSame(['jane!doe'], $this->firstRecipients($repository->search(recipient: 'e!d')), 'The escape character is literal too.');
+        self::assertCount(0, $repository->search(recipient: '%'));
+    }
+
     private function boot(string $environment = 'test'): void
     {
         if (!str_contains($environment, 'nolog') && !class_exists(FailedMessageEvent::class)) {
