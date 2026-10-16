@@ -183,12 +183,15 @@ How it is fed, from Mailer and Messenger events:
 - `MessageEvent` (not queued): an attempt starts. A message sent without a queue
   gets its entry here; before every attempt of a queued one, sender,
   recipients, subject and stored message are refreshed from the rendered message.
-- `SentMessageEvent` / `FailedMessageEvent`: the attempt is recorded.
-- `WorkerMessageFailedEvent`: a worker records its failed attempt here, after the
-  handler is done, so a `doctrine_transaction` middleware that rolls back the
-  handler does not erase it. This also covers failures before the transport (e.g.
-  an invalid message). While Messenger retries, the status goes back to `queued`;
-  once retries are exhausted it stays `failed`.
+- `SentMessageEvent` / `FailedMessageEvent`: the attempt is recorded. In a worker,
+  the transports of a failover that failed before one sent the message are
+  recorded with the success.
+- `WorkerMessageFailedEvent`: a worker records its failed attempts (one per
+  transport tried) here, after the handler is done, so a `doctrine_transaction`
+  middleware that rolls back the handler does not erase them. This also covers
+  failures before the transport (e.g. an invalid message). While Messenger
+  retries, the status goes back to `queued`; once retries are exhausted it stays
+  `failed`.
 
 Rows are written through DBAL on the entity manager's connection, never through
 the ORM unit of work, so logging never flushes your pending changes; the

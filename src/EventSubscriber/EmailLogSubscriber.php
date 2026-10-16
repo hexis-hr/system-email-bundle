@@ -29,10 +29,12 @@ use Symfony\Component\Mime\RawMessage;
  *   created as queued and the message is tagged with a correlation id.
  * - MessageEvent (not queued): a transport attempt starts; the entry is created if
  *   the message was not queued.
- * - SentMessageEvent / FailedMessageEvent: the attempt is recorded.
- * - WorkerMessageFailedEvent: a worker's failed attempt is recorded here, after the
+ * - SentMessageEvent / FailedMessageEvent: the attempt is recorded. In a worker a
+ *   failed attempt is kept until the next transport (failover) sends the message,
+ *   or until the worker reports the failure.
+ * - WorkerMessageFailedEvent: a worker's failed attempts are recorded here, after the
  *   handler is done (a doctrine_transaction middleware has rolled back by then),
- *   whether the transport or something before it failed; a message Messenger
+ *   whether the transports or something before them failed; a message Messenger
  *   retries goes back to queued.
  *
  * The type and reference headers are always removed before delivery. Messages
@@ -44,8 +46,8 @@ final class EmailLogSubscriber implements EventSubscriberInterface
     /** Correlation id of the SendEmailMessage the worker is handling. */
     private ?string $workerMessageId = null;
 
-    /** Transport error of that message, recorded once the worker reports the failure. */
-    private ?string $workerTransportError = null;
+    /** @var list<string> Transport errors of that message, not recorded yet. */
+    private array $workerTransportErrors = [];
 
     public function __construct(
         private EmailLogWriter $writer,
@@ -128,6 +130,12 @@ final class EmailLogSubscriber implements EventSubscriberInterface
             return;
         }
 
+        if ($id === $this->workerMessageId) {
+            // Failover: the transports that failed before this one.
+            $this->recordFailures($id, $this->workerTransportErrors, false);
+            $this->workerTransportErrors = [];
+        }
+
         $this->guard(fn () => $this->writer->recordSent($id, $sent->getMessageId()));
     }
 
@@ -139,7 +147,7 @@ final class EmailLogSubscriber implements EventSubscriberInterface
         }
 
         if ($id === $this->workerMessageId) {
-            $this->workerTransportError = $event->getError()->getMessage();
+            $this->workerTransportErrors[] = $event->getError()->getMessage();
 
             return;
         }
@@ -150,31 +158,44 @@ final class EmailLogSubscriber implements EventSubscriberInterface
     public function onWorkerReceived(WorkerMessageReceivedEvent $event): void
     {
         $this->workerMessageId = $this->workerMessageId($event->getEnvelope());
-        $this->workerTransportError = null;
+        $this->workerTransportErrors = [];
     }
 
     public function onWorkerHandled(WorkerMessageHandledEvent $event): void
     {
         $this->workerMessageId = null;
-        $this->workerTransportError = null;
+        $this->workerTransportErrors = [];
     }
 
     public function onWorkerFailed(WorkerMessageFailedEvent $event): void
     {
         $id = $this->workerMessageId($event->getEnvelope());
-        $transportError = $id !== null && $id === $this->workerMessageId ? $this->workerTransportError : null;
+        $errors = $id !== null && $id === $this->workerMessageId ? $this->workerTransportErrors : [];
         $this->workerMessageId = null;
-        $this->workerTransportError = null;
+        $this->workerTransportErrors = [];
         if ($id === null) {
             return;
         }
 
-        $error = $event->getThrowable();
-        if ($error instanceof HandlerFailedException) {
-            $error = $error->getPrevious() ?? $error;
+        if ($errors === []) {
+            $error = $event->getThrowable();
+            if ($error instanceof HandlerFailedException) {
+                $error = $error->getPrevious() ?? $error;
+            }
+            $errors = [$error->getMessage()];
         }
 
-        $this->guard(fn () => $this->writer->recordFailure($id, $transportError ?? $error->getMessage(), $event->willRetry()));
+        $this->recordFailures($id, $errors, $event->willRetry());
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function recordFailures(string $id, array $errors, bool $willRetry): void
+    {
+        foreach ($errors as $error) {
+            $this->guard(fn () => $this->writer->recordFailure($id, $error, $willRetry));
+        }
     }
 
     private function workerMessageId(Envelope $envelope): ?string

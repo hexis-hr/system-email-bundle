@@ -28,6 +28,7 @@ use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
  * In the "async" environments e-mail is queued on an in-memory Messenger transport
  * (one retry) and handled inside the doctrine_transaction middleware, which rolls
  * back what the handler wrote when it fails; otherwise it is handled synchronously.
+ * In the "failover" environments the mailer tries test://down before test://default.
  * The e-mail log is on, except in the "nolog" environments and on symfony/mailer
  * before 6.2, which it does not support.
  */
@@ -51,7 +52,7 @@ final class TestKernel extends Kernel
             'secret' => 'test',
             'test' => true,
             'http_method_override' => false,
-            'mailer' => ['dsn' => 'test://default'],
+            'mailer' => ['dsn' => str_contains($this->environment, 'failover') ? 'failover(test://down test://default)' : 'test://default'],
             'csrf_protection' => true,
             'session' => ['storage_factory_id' => 'session.storage.factory.mock_file'],
         ];

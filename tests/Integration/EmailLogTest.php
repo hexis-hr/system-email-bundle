@@ -397,6 +397,35 @@ final class EmailLogTest extends KernelTestCase
         self::assertSame('welcome', $entry->getType());
     }
 
+    public function testFailoverTransportsAreAttemptsOfOneQueuedEntry(): void
+    {
+        $this->boot('async_failover');
+        $this->mailer()->send($this->email());
+
+        $this->consume();
+
+        $entry = $this->entries()[0];
+        self::assertSame(EmailLogStatus::SENT, $entry->getStatus());
+        self::assertSame(2, $entry->getAttemptCount());
+        self::assertSame([['failed', 'Transport down.'], ['sent', null]], $this->attempts($entry));
+        self::assertCount(1, TestTransport::$sent);
+    }
+
+    public function testFailoverTransportsThatAllFailAreEachRecordedOnce(): void
+    {
+        $this->boot('async_failover');
+        TestTransport::$fail = true;
+        $this->mailer()->send($this->email());
+
+        $this->consume();
+
+        $entry = $this->entries()[0];
+        self::assertSame(EmailLogStatus::QUEUED, $entry->getStatus(), 'Back to queued while a retry is pending.');
+        self::assertSame(2, $entry->getAttemptCount());
+        self::assertSame([['failed', 'Transport down.'], ['failed', 'Forced transport failure.']], $this->attempts($entry));
+        self::assertSame('Forced transport failure.', $entry->getLastError());
+    }
+
     public function testDisabledLogWritesNothingAndStillStripsTheLogHeaders(): void
     {
         $this->boot('nolog');
@@ -674,6 +703,14 @@ final class EmailLogTest extends KernelTestCase
         }
 
         return $names;
+    }
+
+    /**
+     * @return list<array{0: string, 1: string|null}> status and error of each attempt
+     */
+    private function attempts(SystemEmailLog $entry): array
+    {
+        return array_map(static fn (array $a): array => [$a['status'], $a['error']], $entry->getAttempts());
     }
 
     /**

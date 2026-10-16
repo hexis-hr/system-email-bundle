@@ -12,7 +12,10 @@ final class TestTransportFactory extends AbstractTransportFactory
 {
     public function create(Dsn $dsn): TransportInterface
     {
-        return new TestTransport($this->dispatcher, $this->logger);
+        $transport = new TestTransport($this->dispatcher, $this->logger);
+        $transport->down = $dsn->getHost() === 'down';
+
+        return $transport;
     }
 
     protected function getSupportedSchemes(): array
