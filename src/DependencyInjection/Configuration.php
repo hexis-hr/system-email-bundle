@@ -27,6 +27,9 @@ use Symfony\Component\Config\Definition\ConfigurationInterface;
  *           role: ROLE_ADMIN
  *           base_template: '@SystemEmail/layout.html.twig'
  *       translation_domain: system_email
+ *       mail_log:
+ *           enabled: true
+ *           table_name: system_email_log
  *       types:
  *           sap_alert: { label: 'SAP Alert' }
  *           booking:   { label: 'Booking notifications' }
@@ -87,6 +90,21 @@ final class Configuration implements ConfigurationInterface
                 ->scalarNode('translation_domain')
                     ->info('Translation domain for type labels and admin UI strings.')
                     ->defaultValue('system_email')
+                ->end()
+                ->arrayNode('mail_log')
+                    ->addDefaultsIfNotSet()
+                    ->info('Log of the system e-mails (sent through SystemEmailMailer, sync or via Messenger), with resend. Other mail is not logged.')
+                    ->children()
+                        ->booleanNode('enabled')
+                            ->info('Write the log. The table is part of the bundle schema either way.')
+                            ->defaultFalse()
+                        ->end()
+                        ->scalarNode('table_name')
+                            ->info('Table of the SystemEmailLog entity.')
+                            ->defaultValue('system_email_log')
+                            ->cannotBeEmpty()
+                        ->end()
+                    ->end()
                 ->end()
                 ->arrayNode('types')
                     ->info('The centralized registry of email types. Source of truth synced to the database by system-email:sync.')

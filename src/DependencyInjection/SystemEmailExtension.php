@@ -10,6 +10,7 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Extension\PrependExtensionInterface;
 use Symfony\Component\DependencyInjection\Loader\PhpFileLoader;
 use Symfony\Component\HttpKernel\DependencyInjection\Extension;
+use Symfony\Component\Mailer\Event\FailedMessageEvent;
 
 /**
  * Loads bundle services, exposes the processed configuration as container
@@ -37,6 +38,13 @@ final class SystemEmailExtension extends Extension implements PrependExtensionIn
         $container->setParameter('system_email.admin.base_template', $config['admin']['base_template']);
         $container->setParameter('system_email.translation_domain', $config['translation_domain']);
         $container->setParameter('system_email.types', $config['types']);
+        // The log records attempts from SentMessageEvent and FailedMessageEvent (symfony/mailer 6.2+).
+        if ($config['mail_log']['enabled'] === true && !class_exists(FailedMessageEvent::class)) {
+            throw new \LogicException('system_email.mail_log requires symfony/mailer 6.2 or later.');
+        }
+
+        $container->setParameter('system_email.mail_log.enabled', $config['mail_log']['enabled']);
+        $container->setParameter('system_email.mail_log.table_name', $config['mail_log']['table_name']);
 
         // Alias the configured PSR-6 pool so the manager can depend on a stable id.
         // When caching is disabled the alias is not defined, so the optional

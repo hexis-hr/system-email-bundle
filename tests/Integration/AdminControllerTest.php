@@ -17,7 +17,10 @@ final class AdminControllerTest extends WebTestCase
         $client->catchExceptions(false);
         $em = static::getContainer()->get(EntityManagerInterface::class);
 
-        (new SchemaTool($em))->createSchema($em->getMetadataFactory()->getAllMetadata());
+        $tool = new SchemaTool($em);
+        $metadata = $em->getMetadataFactory()->getAllMetadata();
+        $tool->dropSchema($metadata);
+        $tool->createSchema($metadata);
         $em->persist(new SystemEmailType('welcome', 'Welcome email'));
         $em->flush();
 

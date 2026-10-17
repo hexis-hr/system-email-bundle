@@ -3,10 +3,17 @@
 declare(strict_types=1);
 
 use Doctrine\ORM\EntityManagerInterface;
+use Hexis\SystemEmailBundle\Command\PurgeEmailLogCommand;
+use Hexis\SystemEmailBundle\Command\ResendEmailCommand;
 use Hexis\SystemEmailBundle\Command\SyncTypesCommand;
 use Hexis\SystemEmailBundle\Controller\Admin\SystemEmailController;
+use Hexis\SystemEmailBundle\Doctrine\EmailLogTableNameListener;
+use Hexis\SystemEmailBundle\EventSubscriber\EmailLogSubscriber;
+use Hexis\SystemEmailBundle\Repository\SystemEmailLogRepository;
 use Hexis\SystemEmailBundle\Repository\SystemEmailRecipientRepository;
 use Hexis\SystemEmailBundle\Repository\SystemEmailTypeRepository;
+use Hexis\SystemEmailBundle\Service\EmailLogWriter;
+use Hexis\SystemEmailBundle\Service\EmailResender;
 use Hexis\SystemEmailBundle\Service\SystemEmailMailer;
 use Hexis\SystemEmailBundle\Service\SystemEmailManager;
 use Symfony\Component\Mailer\MailerInterface;
@@ -59,6 +66,51 @@ return static function (\Symfony\Component\DependencyInjection\Loader\Configurat
             '%system_email.types%',
             '%system_email.default_type_enabled%',
         ])
+        ->tag('console.command');
+
+    // Outgoing e-mail log: read model, table name, DBAL writer and the Mailer/Messenger
+    // event subscriber that feeds it (it only writes when mail_log.enabled is true).
+    $services->set(SystemEmailLogRepository::class)
+        ->args([service('doctrine')])
+        ->tag('doctrine.repository_service');
+
+    $services->set(EmailLogTableNameListener::class)
+        ->args(['%system_email.mail_log.table_name%'])
+        ->tag('doctrine.event_listener', ['event' => 'loadClassMetadata']);
+
+    $services->set(EmailLogWriter::class)
+        ->args([
+            service('doctrine'),
+            '%system_email.mail_log.table_name%',
+            service('logger')->ignoreOnInvalid(),
+        ]);
+
+    $services->set(EmailLogSubscriber::class)
+        ->args([
+            service(EmailLogWriter::class),
+            '%system_email.mail_log.enabled%',
+            service('logger')->ignoreOnInvalid(),
+        ])
+        ->tag('kernel.event_subscriber');
+
+    $services->set(EmailResender::class)
+        ->args([
+            service(EmailLogWriter::class),
+            service(SystemEmailLogRepository::class),
+            service(MailerInterface::class),
+            '%system_email.mail_log.enabled%',
+        ])
+        ->public();
+
+    $services->set(ResendEmailCommand::class)
+        ->args([
+            service(EmailResender::class),
+            service(SystemEmailLogRepository::class),
+        ])
+        ->tag('console.command');
+
+    $services->set(PurgeEmailLogCommand::class)
+        ->args([service(EmailLogWriter::class)])
         ->tag('console.command');
 
     // Backend management controller (AbstractController; autoconfigure wires setContainer).

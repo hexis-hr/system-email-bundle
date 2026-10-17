@@ -10,6 +10,9 @@ The bundle owns the configuration and the recipient model. Message content
 (subject and HTML body) stays in your application code - this bundle answers
 "who receives this, and is it turned on?".
 
+Optionally it also keeps an **outgoing e-mail log** of the system e-mails it
+sends, with their status and delivery attempts, and a resend.
+
 - PHP `>= 8.1`
 - Symfony `5.4`, `6.x`, `7.x`, `8.x`
 - Doctrine ORM `2.9+` / `3.x`
@@ -47,6 +50,9 @@ system_email:
         route_prefix: /admin/system-emails
         role: ROLE_ADMIN
         base_template: '@SystemEmail/layout.html.twig'
+    mail_log:
+        enabled: false          # see "Outgoing e-mail log"
+        table_name: system_email_log
     types:
         sap_alert: { label: 'SAP Alert' }
         booking:   { label: 'Booking notifications' }
@@ -59,7 +65,8 @@ here, redeploy, run the sync command, and it becomes manageable in the UI.
 ## Database schema
 
 The bundle ships Doctrine-mapped entities (`system_email_type`,
-`system_email_recipient`) and registers their mapping automatically. Generate a
+`system_email_recipient`, and the e-mail log table, `system_email_log` by
+default) and registers their mapping automatically. Generate a
 migration in your app:
 
 ```bash
@@ -128,7 +135,182 @@ $this->mailer->send(
 `send()` returns `false` (and delivers nothing) when the type is disabled or has
 no recipients; `true` when the message was sent or queued. When `async` is on and
 Symfony Messenger is installed, mail is dispatched as `SendEmailMessage`;
-otherwise it is sent in-request.
+otherwise it is sent in-request. Pass `reference: 'invoice:42'` to record the
+business record the e-mail is about in the e-mail log.
+
+## Outgoing e-mail log
+
+Off by default. Turn it on with `mail_log.enabled: true` once the table exists
+(requires `symfony/mailer` 6.2 or later). The system e-mails are then logged,
+in-request or through a Messenger queue: the ones sent through
+`SystemEmailMailer::send()` and the resends of logged entries. Any other mail
+sent through Symfony Mailer is not logged and not changed.
+
+### Migration
+
+Your application owns the migrations. Set `mail_log.table_name` first if you
+want another name, then generate and run one:
+
+```bash
+bin/console doctrine:migrations:diff
+bin/console doctrine:migrations:migrate
+```
+
+The table belongs to the bundle schema whether or not the log is enabled. Enable
+the log only after the migration ran: a log write that fails is reported through
+the PSR logger and never stops the e-mail, but nothing is logged.
+
+### What is logged
+
+One `Hexis\SystemEmailBundle\Entity\SystemEmailLog` row per message:
+
+| Field | Content |
+|-------|---------|
+| `correlationId` | Id carried by the message in the `X-System-Email-Id` header; ties the queueing and every attempt to one row. |
+| `type`, `reference` | System e-mail type key and the record the e-mail is about (see below). |
+| `sender`, `recipients`, `subject` | From; To, Cc and Bcc addresses, comma-separated; subject. |
+| `status` | `queued`, `sent` or `failed` (`EmailLogStatus`). A message waiting for a Messenger retry is `queued` again. `sent` is final: a later attempt (a slower worker's failure, a duplicate delivery) is only added to the attempts, and the first delivery stays on record. |
+| `attemptCount`, `attempts`, `lastError` | Number of delivery attempts; every attempt (time, status, error); the last error. |
+| `transportMessageId` | Id the transport returned for the successful attempt. |
+| `getStoredMessage()` | The message as handed to the transport (rendered, before DKIM/S/MIME signing): headers, body, attachments. Used for display and resend; dropped once an archive holds the sent e-mail (see "Archive"). |
+| `archiveReference` | Id of the e-mail in an archive your application linked (see "Archive"). |
+| `resentFrom` | The entry this one resends. |
+| `createdAt`, `updatedAt`, `sentAt` | Timestamps. |
+
+How it is fed, from Mailer and Messenger events:
+
+- `SendMessageToTransportsEvent`: a `SendEmailMessage` is queued. The entry is
+  created as `queued`; the queued copy gets the correlation header (the caller's
+  message object is not modified).
+- `MessageEvent` (not queued): an attempt starts. A message sent without a queue
+  gets its entry here; before every attempt of a queued one, sender,
+  recipients, subject and stored message are refreshed from the rendered message.
+- `SentMessageEvent` / `FailedMessageEvent`: the attempt is recorded. In a worker,
+  the transports of a failover that failed before one sent the message are
+  recorded with the success.
+- `WorkerMessageFailedEvent`: a worker records its failed attempts (one per
+  transport tried) and the message as last attempted here, after the handler is
+  done, so a `doctrine_transaction` middleware that rolls back the handler does
+  not erase them. This also covers failures before the transport (e.g. an
+  invalid message). While Messenger retries, the status goes back to `queued`;
+  once retries are exhausted it stays `failed`.
+
+Rows are written through DBAL on the entity manager's connection, never through
+the ORM unit of work, so logging never flushes your pending changes; the
+statements join whatever transaction is open, like the Doctrine Messenger
+transport, in a savepoint: a log write that fails is rolled back alone and leaves
+your transaction usable (PostgreSQL aborts a transaction on a failed statement).
+Send mail outside your business transactions (or queue it on that connection): a
+sent e-mail whose transaction rolls back loses its entry. An attempt is counted
+under a row lock, so workers that handle the same message at once lose none.
+
+**Type and reference.** `SystemEmailMailer::send()` sets the type (its key) and
+the optional `reference` as headers; both are removed before delivery. The type
+header (`SystemEmailLog::HEADER_TYPE`) is what marks a system e-mail: a message
+without it, and without the correlation header of a resend, is left alone.
+
+Limits:
+
+- A bare `RawMessage` (not a `Mime\Message`) cannot carry the header and is not
+  logged.
+- System e-mails queued before the log was enabled carry no correlation id: each
+  attempt gets its own entry. Drain the queues, failure transport included,
+  before enabling the log.
+- Without a queue, a message that fails before the transport (e.g. no From, a
+  signer error) throws to the caller and its entry stays `queued`; with a
+  failover/round-robin transport and no queue, each transport tried gets its own
+  entry. Through a Messenger queue both are logged as attempts of one entry.
+- A message rejected by a `MessageEvent` listener (`reject()`) is not sent; an
+  entry already created for it stays `queued`.
+- Recipients are the To, Cc and Bcc headers; an SMTP envelope with other
+  recipients (`envelope.recipients`) is not logged, and a resend goes to the
+  header recipients. The stored copy is taken before S/MIME encryption.
+
+### Showing the log
+
+The bundle ships no log screen. Build yours on `SystemEmailLogRepository`:
+
+```php
+use Hexis\SystemEmailBundle\Enum\EmailLogStatus;
+use Hexis\SystemEmailBundle\Repository\SystemEmailLogRepository;
+
+$page = $repository->search(
+    status: EmailLogStatus::FAILED,  // all filters optional
+    type: 'booking',
+    recipient: 'example.com',        // part of a To, Cc or Bcc address
+    since: new \DateTimeImmutable('-7 days'),  // inclusive
+    until: new \DateTimeImmutable(),           // exclusive
+    page: 1,
+    perPage: 50,
+);                                   // Doctrine Paginator, newest first
+
+count($page);                        // total matches
+foreach ($page as $entry) { /* SystemEmailLog */ }
+
+$entry->getStoredMessage();          // Email: getHtmlBody(), getAttachments(), getHeaders()
+$repository->findResends($entry);    // entries that resend this one
+```
+
+The log holds message bodies and attachments, which are usually personal data:
+restrict the screen and the commands to administrators. The stored message is
+PHP-serialized, as Messenger's Doctrine transport stores it; an attachment
+added from a file path (`attachFromPath()`) is stored as the path, so a resend
+needs the file to still exist.
+
+### Resend
+
+A resend is a new entry linked to the original (`getResentFrom()`); the original
+is left as it is. It goes through `MailerInterface`, so it is queued when your
+Messenger routing queues `SendEmailMessage`.
+
+```php
+use Hexis\SystemEmailBundle\Service\EmailResender;
+
+$resend = $resender->resend($entry);                           // original recipients
+$resend = $resender->resend($entry, ['fixed@example.com']);    // corrected: replaces To, drops Cc and Bcc
+$resend->getStatus();  // queued, or sent / failed when sent in-request (a transport error is logged, not thrown)
+```
+
+```bash
+bin/console system-email:log:resend 42
+bin/console system-email:log:resend 42 --to=fixed@example.com --to=other@example.com
+```
+
+An entry without a stored message (see "Archive") cannot be resent.
+
+### Archive
+
+An e-mail archive (for example one that writes every sent e-mail to storage on
+`SentMessageEvent`) can hold the sent content instead of the log. The bundle
+depends on no archive: link one from your own listener by calling
+`EmailLogWriter::attachArchive()` with the correlation id and the archive's id
+for the e-mail. The correlation id is the `X-System-Email-Id` header
+(`SystemEmailLog::HEADER_ID`) of the delivered message, so the archived copy
+carries it too:
+
+```php
+use Hexis\SystemEmailBundle\Entity\SystemEmailLog;
+use Hexis\SystemEmailBundle\Service\EmailLogWriter;
+
+$id = $deliveredMessage->getHeaders()->getHeaderBody(SystemEmailLog::HEADER_ID);
+if (is_string($id)) {
+    $writer->attachArchive($id, $archiveId);  // getArchiveReference() returns $archiveId
+}
+```
+
+On a sent entry this drops the stored message: the archive holds what was
+delivered. A queued or failed entry keeps its stored message for display and
+resend; if it is sent later, the message is dropped then. The order of your
+listener and the log's on `SentMessageEvent` does not matter.
+
+### Retention
+
+Nothing is deleted unless you purge, so retention is indefinite by default.
+Schedule the purge to apply a retention period:
+
+```bash
+bin/console system-email:log:purge --older-than=365   # days, 1 to 36500
+```
 
 ## Configuration reference
 
@@ -142,6 +324,8 @@ otherwise it is sent in-request.
 | `admin.role` | `ROLE_ADMIN` | Role required for the UI. |
 | `admin.base_template` | `@SystemEmail/layout.html.twig` | Layout the views extend (must define a `body` block). |
 | `translation_domain` | `system_email` | Domain for admin strings. |
+| `mail_log.enabled` | `false` | Log the system e-mails (see above). |
+| `mail_log.table_name` | `system_email_log` | Table of the log entity. |
 | `types` | `[]` | The email-type registry. |
 
 ## Testing

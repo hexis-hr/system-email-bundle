@@ -25,7 +25,9 @@ final class SyncTypesCommandTest extends KernelTestCase
         $this->types = $container->get(SystemEmailTypeRepository::class);
 
         $tool = new SchemaTool($this->em);
-        $tool->createSchema($this->em->getMetadataFactory()->getAllMetadata());
+        $metadata = $this->em->getMetadataFactory()->getAllMetadata();
+        $tool->dropSchema($metadata);
+        $tool->createSchema($metadata);
     }
 
     public function testSyncCreatesConfiguredTypes(): void
